@@ -57,3 +57,7 @@ test-results/
 # Local documentation output
 /packages/docs/.mintlify/
 /packages/docs/site/
+
+# Machine-specific environment notes (per AGENTS.md Source Boundaries).
+# The design and troubleshooting notes under docs/reference/ stay tracked.
+/docs/reference/windows-*.md
