@@ -465,9 +465,67 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "Aplica-se a {{count}} capítulos desta série",
+      "clearHead": "Limpar cabeçalho",
+      "clearTail": "Limpar rodapé",
+      "head": "Cabeçalho (a partir do topo)",
+      "hint": "As alturas são pixels da imagem de origem medidos a partir de cada extremidade; 0 significa que não há faixa nessa extremidade. Alterá-las só afeta importações futuras.",
+      "label": "Faixas de anúncio do webtoon",
+      "tail": "Rodapé (a partir da base)"
+    },
     "backToShelf": "Voltar à estante",
     "chapterCount": "{{count}} capítulos",
+    "context": {
+      "hint": "Ao traduzir a página N, as N páginas anteriores também são enviadas como exemplos já traduzidos, para manter a consistência. Uma página ainda não traduzida é ignorada. Mais páginas custam mais tokens; o limite é {{max}}.",
+      "pages": "Páginas de contexto do capítulo",
+      "title": "Contexto do capítulo"
+    },
     "empty": "Esta série ainda não tem capítulos",
+    "glossary": {
+      "add": "Adicionar entrada",
+      "category": "Categoria",
+      "empty": "Ainda não há entradas.",
+      "enabled": "Ativada",
+      "entryCount": "{{count}} entradas",
+      "export": "Exportar JSON",
+      "import": "Importar JSON",
+      "importFailed": "Esse arquivo não é um glossário.",
+      "kinds": {
+        "ability": "Habilidade",
+        "item": "Item",
+        "other": "Outro",
+        "organization": "Organização",
+        "person": "Pessoa",
+        "place": "Lugar",
+        "term": "Termo"
+      },
+      "note": "Nota",
+      "notePlaceholder": "Quando se aplica",
+      "origin": {
+        "automatic": "Automático",
+        "detected": "Detectado",
+        "imported": "Importado",
+        "user": "Manual"
+      },
+      "rejected": "O glossário não foi salvo. Cada termo de origem precisa ser único dentro da sua categoria.",
+      "remove": "Remover a entrada {{name}}",
+      "source": "Termo de origem",
+      "title": "Glossário",
+      "translation": "Tradução",
+      "untitled": "sem título"
+    },
+    "import": {
+      "confirm": "Importar série",
+      "kind": "Tipo de capítulo"
+    },
+    "importAd": {
+      "chooseChapter": "Escolha um capítulo",
+      "confirm": "Importar capítulo",
+      "inherit": "Usar as configurações da série",
+      "inheritHint": "Desligado, estas alturas valem só para este capítulo e não são gravadas de volta na série.",
+      "newSeriesHint": "A série ainda não existe, então estas alturas são salvas com ela. Depois o painel de configurações assume."
+    },
     "kind": {
       "manga": "Páginas",
       "webtoon": "Webtoon"
@@ -482,9 +540,21 @@
       "throughOcr": "Detect, OCR, translate",
       "translateOnly": "Translate only"
     },
+    "run": {
+      "dropped": "{{count}} descartados pelo limite de bytes",
+      "summary": "{{matched}} termos do glossário correspondidos · {{injected}} entradas de contexto injetadas",
+      "unsupported": "O provedor atual não aceita instruções no prompt, então nada disso chegou ao modelo."
+    },
     "selectAll": "Select all",
     "selectChapter": "Select {{name}}",
     "selectedCount": "{{count}} selected",
+    "settings": {
+      "description": "Estas três configurações pertencem somente a esta série.",
+      "guidance": "Orientação de tradução",
+      "guidanceHint": "Injetada em todos os capítulos desta série, antes das suas instruções globais.",
+      "guidancePlaceholder": "Convenções de estilo, tratamento, formatação…",
+      "title": "Configurações da série"
+    },
     "status": {
       "done": "Concluído",
       "pending": "Pendente",

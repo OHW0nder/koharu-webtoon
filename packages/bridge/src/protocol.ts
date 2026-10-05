@@ -103,8 +103,11 @@ export const commands = {
 	 *  每一章都建立成一个独立项目，因此导入多章和导入一章走的是同一条提交路径，也同样受"处理
 	 *  任务运行中不可导入"的约束。索引先落盘再建项目：中途失败时已登记的章还在，重试不会留下
 	 *  一部没有记录的漫画。
+	 * 
+	 *  **广告高度由对话框给出。** 这是唯一无处可存的一次：漫画尚不存在，索引里还没有地方放这个值，
+	 *  之后一律从设置区管理（`docs/series-settings-design.md` §2.3）。
 	 */
-	importSeries: (kind: ChapterKind) => __TAURI_INVOKE<Series>("import_series", { kind }),
+	importSeries: (kind: ChapterKind, ad: AdBands) => __TAURI_INVOKE<Series>("import_series", { kind, ad }),
 	/**
 	 *  Lists the chapter directories under the series' source folder that are not registered yet.
 	 * 
@@ -112,16 +115,31 @@ export const commands = {
 	 *  chapter, and a wrong cut is expensive to undo.
 	 */
 	scanSeriesSource: (id: string) => __TAURI_INVOKE<CandidateChapter[]>("scan_series_source", { id }),
-	/**  Imports one chapter of an existing series from its source folder. */
-	importSeriesChapter: (id: string, name: string, kind: ChapterKind) => __TAURI_INVOKE<Series>("import_series_chapter", { id, name, kind }),
+	/**
+	 *  Imports one chapter of an existing series from its source folder.
+	 * 
+	 *  `ad` 是「沿用设置区里的值」为假时用户填的那一组高度。传 `None` 表示沿用本漫画的设置；传值表示这一次
+	 *  用用户的值而**不写回索引**——设置只有一份，导入完这一章之后仍然由设置区说了算
+	 *  （`docs/series-settings-design.md` §2.3）。
+	 */
+	importSeriesChapter: (id: string, name: string, kind: ChapterKind, ad: {
+	/**  自源图顶端起算的首条高度。0 表示这一端没有广告。 */
+	head: number,
+	/**  自源图底端起算的尾条高度。0 表示这一端没有广告。 */
+	tail: number,
+} | null) => __TAURI_INVOKE<Series>("import_series_chapter", { id, name, kind, ad }),
 	/**
 	 *  Runs a processing job over the given chapters, one after another.
 	 * 
 	 *  The kernel allows exactly one project and one job at a time, so the batch is a serial loop:
 	 *  open a chapter, run the whole project scope, wait for the job, move on. Every chapter commits on
 	 *  its own, so an interrupted batch resumes by simply running the chapters that are still pending.
+	 * 
+	 *  **注入内容在每章开始前换一次。** 翻译附加说明是这一次批量唯一能换掉的通道（`injection` 模块的模块
+	 *  注释），换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文各不相同，而本地模型只读
+	 *  一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户配置，漫画的资料不会漏进设置页。
 	 */
-	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<null>("process_series_chapters", { id, projects, operation }),
+	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<SeriesRun>("process_series_chapters", { id, projects, operation }),
 	/**
 	 *  Exports the given chapters side by side under one chosen folder.
 	 * 
@@ -717,6 +735,26 @@ export type SeriesChapter = {
 };
 
 /**
+ *  一次批量实际注入进去的东西，用来让界面说清效果为什么不稳。
+ * 
+ *  命中数与注入数必须能分开看：命中数是术语表里出现在原文中的条数，注入数是最终写进提示词的上文条数。
+ *  两者不一致就说明字节预算把上文截断了，而截断本身是静默的（`docs/reference/koharu-glossary-design.md`
+ *  §4.2）。
+ */
+export type SeriesRun = {
+	/**  跑完的章数。 */
+	chapters: number,
+	/**  术语表里出现在原文中的条数。整批共用同一份原文，所以这个值在批内不变。 */
+	matched: number,
+	/**  写进提示词的上文条数，各章累加。 */
+	injected: number,
+	/**  因为字节预算被丢掉的条文数，各章累加。 */
+	dropped: number,
+	/**  当前服务商不接受提示词，这一批的注入内容全部无效。 */
+	unsupported: boolean,
+};
+
+/**
  *  漫画级的翻译资料与配置。
  * 
  *  归属漫画而不是章：资料的生命周期跟着整部作品走，而章项目会被删除重建。
@@ -737,6 +775,14 @@ export type SeriesSettings = {
 	 *  整个编排文件。`Some` 但文件不存在是合法状态，读取时当作空表。
 	 */
 	glossary: string | null,
+	/**
+	 *  章内上文回溯的页数：翻译第 N 页时带上第 N−1 到第 N−N 页的成对双语对照。0 表示不注入。
+	 * 
+	 *  这不是章的资料而是**运行参数**——它决定翻译阶段每次请求带多少先例，所以归到批量执行时
+	 *  写进管线配置，而不像指导与术语表那样渲染进附加说明。合适的距离取决于模型与作品，只能实测
+	 *  确定，所以它是用户可调的；硬上限由 `koharu_pipeline::MAX_CONTEXT_PAGES` 兜住。
+	 */
+	context_pages?: number,
 };
 
 /**  首页漫画柜需要的一条漫画。 */
@@ -792,6 +838,13 @@ export type TranslationConfig = {
 	generation: GenerationConfig,
 	target_language: string,
 	instructions: string | null,
+	/**
+	 *  章内上文回溯的页数：翻译第 N 页时带上第 N−1 至第 N−N 页的成对双语对照。0 表示不注入。
+	 * 
+	 *  走的是语境条目通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的全部意义在于
+	 *  逐页不同（见 `context` 模块）。值由漫画级设置给出，上限是 [`crate::MAX_CONTEXT_PAGES`]。
+	 */
+	context_pages?: number,
 };
 
 export type TypesettingConfig = {

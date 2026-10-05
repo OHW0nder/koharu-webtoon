@@ -7,6 +7,8 @@ use koharu_secrets::ExposeSecret as _;
 use koharu_translator::{Language, Model, Provider, ProviderConfig, ProvidersConfig};
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::{AppHandle, Manager as _};
+use tauri_runtime_cef::CefRuntime;
 
 use super::Error;
 
@@ -157,6 +159,7 @@ pub struct LanguageChoice {
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn save_preferences(
+    handle: AppHandle<CefRuntime>,
     mut pipeline: PipelineConfig,
     providers: ProviderPreferences,
     typesetting: TypesettingConfig,
@@ -168,7 +171,7 @@ pub(crate) async fn save_preferences(
     let typesetting_config = TypesettingConfig::load()?;
     {
         let mut current = pipeline_config.write()?;
-        *current = pipeline;
+        *current = pipeline.clone();
         current.save()?;
     }
     {
@@ -182,12 +185,24 @@ pub(crate) async fn save_preferences(
         current.save()?;
     }
     let preferences = Preferences::load()?;
+    // 管线订阅的是内存句柄而不是配置文件，所以设置保存之后必须显式推一次，否则要等下次启动才生效。
+    // 走内存句柄换来的是漫画级的注入内容不落盘：两处各写各的，互不覆盖。
+    publish_to_live_pipeline(&handle, pipeline);
     tracing::info!(
         target: "koharu_metrics",
         metric = "preference_changed",
         setting = "application",
     );
     Ok(preferences)
+}
+
+/// 把用户设置推给管线跑的那份内存句柄。推失败只记日志：设置已经落盘，重启后自然生效。
+fn publish_to_live_pipeline(handle: &AppHandle<CefRuntime>, pipeline: PipelineConfig) {
+    let live = handle.state::<koharu_config::Config<PipelineConfig>>();
+    match live.write() {
+        Ok(mut current) => *current = pipeline,
+        Err(error) => tracing::error!(%error, "could not reach the live pipeline configuration"),
+    }
 }
 
 fn remember_pipeline_profiles(config: &mut PipelineConfig) {

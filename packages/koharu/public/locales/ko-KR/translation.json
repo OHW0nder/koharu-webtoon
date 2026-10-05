@@ -465,9 +465,67 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "이 작품의 {{count}}화에 적용됩니다",
+      "clearHead": "머리 지우기",
+      "clearTail": "꼬리 지우기",
+      "head": "머리(위에서부터)",
+      "hint": "높이는 원본 이미지의 픽셀 값이며 각 끝에서부터 잽니다. 0이면 그쪽 끝에 띠가 없다는 뜻입니다. 변경하면 이후 가져오기에만 영향을 줍니다.",
+      "label": "웹툰 광고 띠",
+      "tail": "꼬리(아래에서부터)"
+    },
     "backToShelf": "책장으로 돌아가기",
     "chapterCount": "{{count}} 화",
+    "context": {
+      "hint": "N쪽을 번역할 때 앞의 N쪽이 이미 번역된 대조로 함께 전달되어 표현이 일정하게 유지됩니다. 아직 번역하지 않은 쪽은 건너뜁니다. 쪽 수가 많을수록 token을 더 쓰며, 상한은 {{max}}쪽입니다.",
+      "pages": "챕터 문맥 쪽 수",
+      "title": "챕터 문맥"
+    },
     "empty": "이 작품에는 아직 화가 없습니다",
+    "glossary": {
+      "add": "항목 추가",
+      "category": "분류",
+      "empty": "아직 항목이 없습니다.",
+      "enabled": "사용",
+      "entryCount": "항목 {{count}}개",
+      "export": "JSON 내보내기",
+      "import": "JSON 가져오기",
+      "importFailed": "이 파일은 용어집이 아닙니다.",
+      "kinds": {
+        "ability": "능력",
+        "item": "아이템",
+        "other": "기타",
+        "organization": "조직",
+        "person": "인물",
+        "place": "장소",
+        "term": "용어"
+      },
+      "note": "메모",
+      "notePlaceholder": "적용되는 상황",
+      "origin": {
+        "automatic": "자동",
+        "detected": "감지됨",
+        "imported": "가져옴",
+        "user": "수동"
+      },
+      "rejected": "용어집을 저장하지 못했습니다. 원문 용어는 분류 안에서 중복될 수 없습니다.",
+      "remove": "항목 {{name}} 삭제",
+      "source": "원문 용어",
+      "title": "용어집",
+      "translation": "번역문",
+      "untitled": "제목 없음"
+    },
+    "import": {
+      "confirm": "작품 가져오기",
+      "kind": "화 종류"
+    },
+    "importAd": {
+      "chooseChapter": "화 선택",
+      "confirm": "화 가져오기",
+      "inherit": "작품 설정 사용",
+      "inheritHint": "끄면 이 높이는 이 화에만 적용되며 작품에 되돌려 저장되지 않습니다.",
+      "newSeriesHint": "아직 작품이 없으므로 이 높이는 작품과 함께 저장됩니다. 이후에는 설정 패널이 이어서 담당합니다."
+    },
     "kind": {
       "manga": "페이지",
       "webtoon": "웹툰"
@@ -482,9 +540,21 @@
       "throughOcr": "Detect, OCR, translate",
       "translateOnly": "Translate only"
     },
+    "run": {
+      "dropped": "바이트 예산으로 {{count}}개를 버렸습니다",
+      "summary": "용어 {{matched}}개 일치 ·上文 {{injected}}개 주입",
+      "unsupported": "현재 제공자는 프롬프트 지침을 받지 않으므로 이 내용이 모델에 전달되지 않았습니다."
+    },
     "selectAll": "Select all",
     "selectChapter": "Select {{name}}",
     "selectedCount": "{{count}} selected",
+    "settings": {
+      "description": "이 세 가지 설정은 이 작품에만 적용됩니다.",
+      "guidance": "번역 지침",
+      "guidanceHint": "이 작품의 모든 화에 전체 지침보다 먼저 주입됩니다.",
+      "guidancePlaceholder": "문체 규칙, 호칭, 서식…",
+      "title": "작품 설정"
+    },
     "status": {
       "done": "완료",
       "pending": "대기",

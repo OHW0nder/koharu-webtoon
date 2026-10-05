@@ -465,9 +465,67 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "Bu serideki {{count}} bölüme uygulanır",
+      "clearHead": "Baş kısmı temizle",
+      "clearTail": "Son kısmı temizle",
+      "head": "Baş (üstten)",
+      "hint": "Yükseklikler, her uçtan ölçülen kaynak görsel piksel değerleridir; 0 o uçta bant olmadığı anlamına gelir. Değişiklikler yalnızca sonraki içe aktarmaları etkiler.",
+      "label": "Webtoon reklam bantları",
+      "tail": "Son (alttan)"
+    },
     "backToShelf": "Raf'a dön",
     "chapterCount": "{{count}} bölüm",
+    "context": {
+      "hint": "N. sayfayı çevirirken önceki N sayfanın çevrilmiş örnekleri de gönderilir, böylece ifade tutarlı kalır. Henüz çevrilmemiş bir sayfa atlanır. Daha fazla sayfa daha fazla jeton harcar; en fazla {{max}}.",
+      "pages": "Bölüm içi bağlam sayfası",
+      "title": "Bölüm içi bağlam"
+    },
     "empty": "Bu seride henüz bölüm yok",
+    "glossary": {
+      "add": "Kayıt ekle",
+      "category": "Kategori",
+      "empty": "Henüz kayıt yok.",
+      "enabled": "Etkin",
+      "entryCount": "{{count}} kayıt",
+      "export": "JSON dışa aktar",
+      "import": "JSON içe aktar",
+      "importFailed": "Bu dosya bir sözlük değil.",
+      "kinds": {
+        "ability": "Yetenek",
+        "item": "Eşya",
+        "other": "Diğer",
+        "organization": "Kuruluş",
+        "person": "Kişi",
+        "place": "Yer",
+        "term": "Terim"
+      },
+      "note": "Not",
+      "notePlaceholder": "Ne zaman geçerli",
+      "origin": {
+        "automatic": "Otomatik",
+        "detected": "Algılandı",
+        "imported": "İçe aktarıldı",
+        "user": "Manuel"
+      },
+      "rejected": "Sözlük kaydedilmedi. Her kaynak terimi kendi kategorisi içinde benzersiz olmalıdır.",
+      "remove": "{{name}} kaydını kaldır",
+      "source": "Kaynak terim",
+      "title": "Sözlük",
+      "translation": "Çeviri",
+      "untitled": "adsız"
+    },
+    "import": {
+      "confirm": "Seriyi içe aktar",
+      "kind": "Bölüm türü"
+    },
+    "importAd": {
+      "chooseChapter": "Bir bölüm seçin",
+      "confirm": "Bölümü içe aktar",
+      "inherit": "Seri ayarlarını kullan",
+      "inheritHint": "Kapalıyken bu yükseklikler yalnızca bu bölüm için geçerlidir ve seriye geri yazılmaz.",
+      "newSeriesHint": "Seri henüz yok, bu yükseklikler onunla birlikte saklanır. Sonrasında ayarlar paneli devralır."
+    },
     "kind": {
       "manga": "Sayfalar",
       "webtoon": "Webtoon"
@@ -482,9 +540,21 @@
       "throughOcr": "Detect, OCR, translate",
       "translateOnly": "Translate only"
     },
+    "run": {
+      "dropped": "Bayt bütçesi nedeniyle {{count}} kayıt atıldı",
+      "summary": "{{matched}} sözlük terimi eşleşti · {{injected}} bağlam kaydı eklendi",
+      "unsupported": "Geçerli sağlayıcı istem talimatlarını kabul etmiyor, bu yüzden bunların hiçbiri modele ulaşmadı."
+    },
     "selectAll": "Select all",
     "selectChapter": "Select {{name}}",
     "selectedCount": "{{count}} selected",
+    "settings": {
+      "description": "Bu üç ayar yalnızca bu seriye aittir.",
+      "guidance": "Çeviri yönergesi",
+      "guidanceHint": "Genel talimatlarınızdan önce bu serinin her bölümüne eklenir.",
+      "guidancePlaceholder": "Üslup kuralları, hitap biçimleri, biçimlendirme…",
+      "title": "Seri ayarları"
+    },
     "status": {
       "done": "Tamamlandı",
       "pending": "Beklemede",

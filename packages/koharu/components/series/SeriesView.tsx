@@ -4,6 +4,8 @@ import { ArrowLeft, Download, LoaderCircle, Plus, Rows3, ScrollText } from 'luci
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AdBandField } from '@/components/series/AdBandField'
+import { SeriesSettings } from '@/components/series/SeriesSettings'
 import { call } from '@/lib/backend'
 import {
   useExportSeriesChapters,
@@ -15,9 +17,11 @@ import {
 import { useKoharuStore } from '@/lib/store'
 import {
   commands,
+  type AdBands,
   type ChapterKind,
   type ChapterStatus,
   type Operation,
+  type SeriesRun,
 } from '@koharu/bridge/protocol'
 import { Button } from '@koharu/ui/components/button'
 import {
@@ -26,7 +30,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@koharu/ui/components/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/popover'
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
+import { Switch } from '@koharu/ui/components/switch'
 
 /** The pipelines worth offering per batch. A full run is the common case; the rest exist for
  *  re-running one stage after a prompt change without redoing the rest. */
@@ -48,6 +54,7 @@ export function SeriesView({ id }: { id: string }) {
   const { processChapters, processing } = useProcessSeriesChapters(id)
   const { exportChapters, exporting } = useExportSeriesChapters(id)
   const [selected, setSelected] = useState<string[]>([])
+  const [run, setRun] = useState<SeriesRun | null>(null)
 
   const chapters = series.data?.chapters ?? []
   const busy = processing || exporting || importingChapter
@@ -56,6 +63,7 @@ export function SeriesView({ id }: { id: string }) {
     [chapters, selected],
   )
   const targets = chosen.map((chapter) => chapter.project)
+  const webtoonChapters = chapters.filter((chapter) => chapter.kind === 'webtoon').length
 
   const toggle = (project: string) =>
     setSelected((current) =>
@@ -63,6 +71,15 @@ export function SeriesView({ id }: { id: string }) {
         ? current.filter((entry) => entry !== project)
         : [...current, project],
     )
+
+  // Injection is truncated silently on the backend, so the batch reports what actually reached
+  // the prompt. Without that the user has no way to tell why the result keeps changing.
+  const start = (operation: Operation) => {
+    setRun(null)
+    void processChapters({ projects: targets, operation })
+      .then((result) => setRun(result))
+      .catch(() => undefined)
+  }
 
   return (
     <div className='flex min-h-0 flex-1 flex-col bg-[var(--surface-canvas)]'>
@@ -85,11 +102,12 @@ export function SeriesView({ id }: { id: string }) {
           </p>
         </div>
 
-        <ImportChapterMenu
+        <ImportChapterDialog
           busy={busy}
           candidates={candidates.data ?? []}
           scanning={candidates.isFetching}
-          onImport={(name, kind) => importChapter({ name, kind })}
+          ad={series.data?.settings.ad ?? { head: 0, tail: 0 }}
+          onImport={(name, kind, ad) => importChapter({ name, kind, ad })}
         />
 
         <DropdownMenu>
@@ -117,11 +135,7 @@ export function SeriesView({ id }: { id: string }) {
               <DropdownMenuItem
                 key={pipeline.id}
                 className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px]'
-                onClick={() =>
-                  void processChapters({ projects: targets, operation: pipeline.operation }).catch(
-                    () => undefined,
-                  )
-                }
+                onClick={() => start(pipeline.operation)}
               >
                 {t(`series.pipeline.${pipeline.id}`)}
               </DropdownMenuItem>
@@ -165,6 +179,20 @@ export function SeriesView({ id }: { id: string }) {
         </DropdownMenu>
       </header>
 
+      {run && (
+        <div className='flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-border/40 px-4 py-1.5 text-[10px] text-muted-foreground'>
+          <span className='tabular-nums'>
+            {t('series.run.summary', { matched: run.matched, injected: run.injected })}
+          </span>
+          {run.dropped > 0 && (
+            <span className='tabular-nums'>{t('series.run.dropped', { count: run.dropped })}</span>
+          )}
+          {run.unsupported && (
+            <span className='text-destructive'>{t('series.run.unsupported')}</span>
+          )}
+        </div>
+      )}
+
       {chapters.length > 0 && (
         <div className='flex items-center gap-2 border-b border-border/40 px-4 py-1.5'>
           <label className='flex items-center gap-1.5 text-[10px] text-muted-foreground'>
@@ -186,50 +214,74 @@ export function SeriesView({ id }: { id: string }) {
       )}
 
       <ScrollArea className='min-h-0 flex-1' viewportClassName='p-4'>
-        {series.isError ? (
-          <p role='status' className='text-[11px] text-destructive'>
-            {String(series.error)}
-          </p>
-        ) : chapters.length === 0 ? (
-          <p
-            role='status'
-            className='grid min-h-full place-items-center text-[11px] text-muted-foreground'
-          >
-            {series.isPending ? t('common.loading') : t('series.empty')}
-          </p>
-        ) : (
-          <ul className='mx-auto grid w-full max-w-2xl gap-1'>
-            {chapters.map((chapter) => (
-              <ChapterRow
-                key={chapter.project}
-                chapter={chapter}
-                picked={selected.includes(chapter.project)}
-                disabled={busy}
-                onToggle={() => toggle(chapter.project)}
-              />
-            ))}
-          </ul>
-        )}
+        <div className='mx-auto grid w-full max-w-3xl gap-4'>
+          {/* Keyed by id so switching series re-seeds the settings drafts from the new index. */}
+          <SeriesSettings key={id} id={id} webtoonChapters={webtoonChapters} />
+
+          {series.isError ? (
+            <p role='status' className='text-[11px] text-destructive'>
+              {String(series.error)}
+            </p>
+          ) : chapters.length === 0 ? (
+            <p
+              role='status'
+              className='grid min-h-32 place-items-center text-[11px] text-muted-foreground'
+            >
+              {series.isPending ? t('common.loading') : t('series.empty')}
+            </p>
+          ) : (
+            <ul className='grid w-full gap-1'>
+              {chapters.map((chapter) => (
+                <ChapterRow
+                  key={chapter.project}
+                  chapter={chapter}
+                  picked={selected.includes(chapter.project)}
+                  disabled={busy}
+                  onToggle={() => toggle(chapter.project)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
       </ScrollArea>
     </div>
   )
 }
 
-function ImportChapterMenu({
+/** A popover rather than a dropdown, because the ad band fields need to be typed into and Base
+ *  UI's menu typeahead swallows every character key. */
+function ImportChapterDialog({
   busy,
   candidates,
   scanning,
+  ad,
   onImport,
 }: {
   busy: boolean
   candidates: { name: string; seq: number; files: number }[]
   scanning: boolean
-  onImport: (name: string, kind: ChapterKind) => Promise<unknown>
+  ad: AdBands
+  onImport: (name: string, kind: ChapterKind, ad: AdBands | null) => Promise<unknown>
 }) {
   const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [choice, setChoice] = useState<{ name: string; kind: ChapterKind } | null>(null)
+  const [inherit, setInherit] = useState(true)
+  const [heights, setHeights] = useState<AdBands>(ad)
+
+  // Re-seeded on every open, so an edit in the settings panel cannot rewrite what is being typed.
+  const reopen = (next: boolean) => {
+    if (next) {
+      setChoice(null)
+      setInherit(true)
+      setHeights(ad)
+    }
+    setOpen(next)
+  }
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <Popover open={open} onOpenChange={reopen}>
+      <PopoverTrigger
         render={
           <Button
             type='button'
@@ -242,37 +294,103 @@ function ImportChapterMenu({
       >
         <Plus className='size-3' />
         {t('series.importChapter')}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='end' className='min-w-52 border border-border/50 p-0.5'>
-        {candidates.length === 0 ? (
-          <p className='px-2 py-1.5 text-[10px] text-muted-foreground'>
-            {scanning ? t('common.loading') : t('series.noCandidates')}
+      </PopoverTrigger>
+      <PopoverContent align='end' className='w-80 gap-2 p-2'>
+        <div className='grid gap-1'>
+          <p className='px-0.5 text-[10px] font-medium text-muted-foreground'>
+            {t('series.importAd.chooseChapter')}
           </p>
-        ) : (
-          candidates.map((candidate) => (
-            <div key={candidate.name}>
-              <p className='px-2 pt-1.5 text-[9px] text-muted-foreground'>
-                {candidate.name} · {t('series.fileCount', { count: candidate.files })}
-              </p>
-              {(['webtoon', 'manga'] as const).map((kind) => (
-                <DropdownMenuItem
-                  key={kind}
-                  className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px]'
-                  onClick={() => void onImport(candidate.name, kind).catch(() => undefined)}
-                >
-                  {kind === 'webtoon' ? (
-                    <Rows3 className='size-3.5' />
-                  ) : (
-                    <ScrollText className='size-3.5' />
-                  )}
-                  {t(`series.kind.${kind}`)}
-                </DropdownMenuItem>
-              ))}
+          {candidates.length === 0 ? (
+            <p className='px-0.5 text-[10px] text-muted-foreground'>
+              {scanning ? t('common.loading') : t('series.noCandidates')}
+            </p>
+          ) : (
+            candidates.map((candidate) => (
+              <div key={candidate.name} className='grid gap-0.5'>
+                <p className='px-0.5 text-[9px] text-muted-foreground'>
+                  {candidate.name} · {t('series.fileCount', { count: candidate.files })}
+                </p>
+                <div className='flex gap-1'>
+                  {(['webtoon', 'manga'] as const).map((kind) => {
+                    const picked = choice?.name === candidate.name && choice.kind === kind
+                    return (
+                      <Button
+                        key={kind}
+                        type='button'
+                        size='sm'
+                        variant={picked ? 'secondary' : 'ghost'}
+                        aria-pressed={picked}
+                        className='h-7 flex-1 gap-1.5 text-[10px] font-normal'
+                        onClick={() => setChoice({ name: candidate.name, kind })}
+                      >
+                        {kind === 'webtoon' ? (
+                          <Rows3 className='size-3' />
+                        ) : (
+                          <ScrollText className='size-3' />
+                        )}
+                        {t(`series.kind.${kind}`)}
+                      </Button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className='grid gap-1.5 border-t border-border/60 pt-2'>
+          <div className='flex items-center justify-between gap-2'>
+            <span className='text-[10px] text-muted-foreground'>
+              {t('series.importAd.inherit')}
+            </span>
+            <Switch
+              size='sm'
+              checked={inherit}
+              aria-label={t('series.importAd.inherit')}
+              onCheckedChange={setInherit}
+            />
+          </div>
+
+          {!inherit && (
+            <div className='grid gap-1'>
+              <AdBandField
+                label={t('series.ad.head')}
+                value={heights.head}
+                clearLabel={t('series.ad.clearHead')}
+                onChange={(head) => setHeights((current) => ({ ...current, head }))}
+              />
+              <AdBandField
+                label={t('series.ad.tail')}
+                value={heights.tail}
+                clearLabel={t('series.ad.clearTail')}
+                onChange={(tail) => setHeights((current) => ({ ...current, tail }))}
+              />
             </div>
-          ))
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          )}
+
+          <p className='text-[9px] leading-4 text-muted-foreground'>
+            {inherit ? t('series.ad.hint') : t('series.importAd.inheritHint')}
+          </p>
+
+          <Button
+            type='button'
+            size='sm'
+            disabled={busy || !choice}
+            className='h-7 gap-1.5 text-[10px]'
+            onClick={() => {
+              if (!choice) return
+              setOpen(false)
+              void onImport(choice.name, choice.kind, inherit ? null : heights).catch(
+                () => undefined,
+              )
+            }}
+          >
+            {busy ? <LoaderCircle className='size-3 animate-spin' /> : <Plus className='size-3' />}
+            {t('series.importAd.confirm')}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

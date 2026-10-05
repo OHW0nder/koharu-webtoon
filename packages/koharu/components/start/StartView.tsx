@@ -1,18 +1,15 @@
 'use client'
 
 import { BookOpen, LoaderCircle, Plus, Rows3, ScrollText, Settings } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AdBandField } from '@/components/series/AdBandField'
 import { useImportSeries, useSeries } from '@/lib/queries'
 import { useKoharuStore } from '@/lib/store'
-import type { SeriesSummary } from '@koharu/bridge/protocol'
+import type { AdBands, ChapterKind, SeriesSummary } from '@koharu/bridge/protocol'
 import { Button } from '@koharu/ui/components/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@koharu/ui/components/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/popover'
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@koharu/ui/components/tooltip'
 
@@ -41,8 +38,8 @@ export function StartView() {
           <div className='flex shrink-0 items-center gap-1'>
             <ImportMenu
               importing={importing}
-              onImport={async (kind) => {
-                const created = await importSeries(kind)
+              onImport={async (kind, ad) => {
+                const created = await importSeries({ kind, ad })
                 if (created) showSeries(created.id)
               }}
             />
@@ -99,17 +96,33 @@ export function StartView() {
   )
 }
 
+/** A popover rather than a dropdown, because the ad band fields have to be typed into and Base
+ *  UI's menu typeahead swallows every character key.
+ *
+ *  The ad bands are asked for here rather than in the settings panel because this is the one
+ *  moment the series does not exist: there is no index to keep the values in yet, so afterwards
+ *  the settings panel owns them. */
 function ImportMenu({
   importing,
   onImport,
 }: {
   importing: boolean
-  onImport: (kind: 'manga' | 'webtoon') => Promise<void>
+  onImport: (kind: ChapterKind, ad: AdBands) => Promise<void>
 }) {
   const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [kind, setKind] = useState<ChapterKind>('webtoon')
+  const [ad, setAd] = useState<AdBands>({ head: 0, tail: 0 })
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setAd({ head: 0, tail: 0 })
+        setOpen(next)
+      }}
+    >
+      <PopoverTrigger
         render={
           <Button
             type='button'
@@ -127,29 +140,75 @@ function ImportMenu({
           <Plus className='size-3.5' />
         )}
         {importing ? t('shelf.importing') : t('shelf.import')}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align='end'
-        className='w-auto min-w-44 border border-border/50 p-0.5 shadow-sm ring-0'
-      >
-        <DropdownMenuItem
-          disabled={importing}
-          className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px] [&_svg:not([class*="size-"])]:size-3.5'
-          onClick={() => void onImport('manga')}
-        >
-          <ScrollText />
-          {t('shelf.importManga')}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={importing}
-          className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px] [&_svg:not([class*="size-"])]:size-3.5'
-          onClick={() => void onImport('webtoon')}
-        >
-          <Rows3 />
-          {t('shelf.importWebtoon')}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </PopoverTrigger>
+      <PopoverContent align='end' className='w-72 gap-2 p-2'>
+        <div className='grid gap-1'>
+          <p className='px-0.5 text-[10px] font-medium text-muted-foreground'>
+            {t('series.import.kind')}
+          </p>
+          <div className='flex gap-1'>
+            {(['manga', 'webtoon'] as const).map((candidate) => (
+              <Button
+                key={candidate}
+                type='button'
+                size='sm'
+                variant={kind === candidate ? 'secondary' : 'ghost'}
+                aria-pressed={kind === candidate}
+                className='h-7 flex-1 gap-1.5 text-[10px] font-normal'
+                onClick={() => setKind(candidate)}
+              >
+                {candidate === 'webtoon' ? (
+                  <Rows3 className='size-3' />
+                ) : (
+                  <ScrollText className='size-3' />
+                )}
+                {t(`series.kind.${candidate}`)}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div className='grid gap-1.5 border-t border-border/60 pt-2'>
+          <p className='text-[10px] font-medium'>{t('series.ad.label')}</p>
+          <AdBandField
+            label={t('series.ad.head')}
+            value={ad.head}
+            clearLabel={t('series.ad.clearHead')}
+            disabled={kind !== 'webtoon'}
+            onChange={(head) => setAd((current) => ({ ...current, head }))}
+          />
+          <AdBandField
+            label={t('series.ad.tail')}
+            value={ad.tail}
+            clearLabel={t('series.ad.clearTail')}
+            disabled={kind !== 'webtoon'}
+            onChange={(tail) => setAd((current) => ({ ...current, tail }))}
+          />
+          <p className='text-[9px] leading-4 text-muted-foreground'>
+            {t('series.importAd.newSeriesHint')}
+          </p>
+          <Button
+            type='button'
+            size='sm'
+            disabled={importing}
+            className='h-7 gap-1.5 text-[10px]'
+            onClick={() => {
+              setOpen(false)
+              // The argument is required either way, and ad bands only mean something for a
+              // webtoon, so a page folder sends zeros.
+              void onImport(kind, kind === 'webtoon' ? ad : { head: 0, tail: 0 })
+            }}
+          >
+            {importing ? (
+              <LoaderCircle className='size-3 animate-spin' />
+            ) : (
+              <Plus className='size-3' />
+            )}
+            {t('series.import.confirm')}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

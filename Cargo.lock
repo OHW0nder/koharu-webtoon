@@ -4707,6 +4707,7 @@ dependencies = [
  "icu_normalizer",
  "image",
  "koharu-agent",
+ "koharu-config",
  "koharu-desktop",
  "koharu-metrics",
  "koharu-ml",

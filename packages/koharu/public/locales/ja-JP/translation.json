@@ -465,9 +465,67 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "この作品の {{count}} 章に適用されます",
+      "clearHead": "先頭をクリア",
+      "clearTail": "末尾をクリア",
+      "head": "先頭（上部から）",
+      "hint": "高さは元画像のピクセル値で、それぞれの端から測ったものです。0 はその端に広告帯がないことを意味します。変更は以降のインポートにのみ影響します。",
+      "label": "ウェブトゥーンの広告帯",
+      "tail": "末尾（下部から）"
+    },
     "backToShelf": "本棚に戻る",
     "chapterCount": "{{count}} 章",
+    "context": {
+      "hint": "N 頁目を翻訳するとき、直前の N ページ分の訳文も例として一緒に送るので、表現がぶれにくくなります。未翻訳のページはそのままスキップされます。ページ数を増やすほど token を消費し、上限は {{max}} ページです。",
+      "pages": "章内上文のページ数",
+      "title": "章内上文"
+    },
     "empty": "この作品にはまだ章がありません",
+    "glossary": {
+      "add": "項目を追加",
+      "category": "カテゴリ",
+      "empty": "まだ項目がありません。",
+      "enabled": "有効",
+      "entryCount": "{{count}} 件の項目",
+      "export": "JSON を書き出す",
+      "import": "JSON を読み込む",
+      "importFailed": "そのファイルは用語表ではありません。",
+      "kinds": {
+        "ability": "能力",
+        "item": "アイテム",
+        "other": "その他",
+        "organization": "組織",
+        "person": "人物",
+        "place": "場所",
+        "term": "用語"
+      },
+      "note": "メモ",
+      "notePlaceholder": "適用される場面",
+      "origin": {
+        "automatic": "自動",
+        "detected": "検出",
+        "imported": "インポート",
+        "user": "手動"
+      },
+      "rejected": "用語表を保存できませんでした。原文の用語はカテゴリ内で一意である必要があります。",
+      "remove": "項目{{name}}を削除",
+      "source": "原文の用語",
+      "title": "用語表",
+      "translation": "訳文",
+      "untitled": "無題"
+    },
+    "import": {
+      "confirm": "作品を読み込む",
+      "kind": "章の種類"
+    },
+    "importAd": {
+      "chooseChapter": "章を選びます",
+      "confirm": "章を読み込む",
+      "inherit": "作品の設定を使う",
+      "inheritHint": "オフにすると、これらの高さはこの章にだけ適用され、作品には書き戻されません。",
+      "newSeriesHint": "作品はまだ存在しないため、これらの高さは作品と一緒に保存されます。その後は設定パネルが引き継ぎます。"
+    },
     "kind": {
       "manga": "ページ",
       "webtoon": "ウェブトゥーン"
@@ -482,9 +540,21 @@
       "throughOcr": "Detect, OCR, translate",
       "translateOnly": "Translate only"
     },
+    "run": {
+      "dropped": "バイト上限により {{count}} 件を破棄しました",
+      "summary": "用語 {{matched}} 件が一致 · 上文 {{injected}} 件を注入しました",
+      "unsupported": "現在のプロバイダーはプロンプトの指示を受け付けないため、これらの内容はモデルに届いていません。"
+    },
     "selectAll": "Select all",
     "selectChapter": "Select {{name}}",
     "selectedCount": "{{count}} selected",
+    "settings": {
+      "description": "この3つの設定は、この作品にのみ適用されます。",
+      "guidance": "翻訳指針",
+      "guidanceHint": "この作品のすべての章に、全体の指示より先に注入されます。",
+      "guidancePlaceholder": "文体の約束、敬称、書式…",
+      "title": "作品の設定"
+    },
     "status": {
       "done": "完了",
       "pending": "未取込",

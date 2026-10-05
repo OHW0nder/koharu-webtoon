@@ -79,100 +79,141 @@
 
 ---
 
-## 3. 剩余步骤
+## 3. 剩余步骤（已全部完成）
 
-按依赖排序。每步只碰自己那几个文件，3.2 / 3.4 / 3.6 可并行。
+下面记录**实际落地的东西**与**两处偏离文档的决定**。
 
 ### 3.1 首次导入的广告高度入口
 
-**现状**：`import_series` 用 `planned.settings.ad`，恒为 0/0，所以**首批导入不裁广告**。
-
-**要做的**：`import_series` 增加一个可选参数（广告高度），导入完成后写进 `planned.settings`。这是本项目自己的命令，改签名不违反 `docs/extending-koharu.md` §3.3（那条约束的是上游拥有的命令）。
-
-**判断**：漫画尚不存在时无处可存，所以这一次必须由对话框给出；之后一律从设置区管理。
+- [x] `import_series` 增加 `ad: AdBands` 参数，在导入循环开始前写进 `planned.settings.ad`（`series.rs`）
+- [x] `StartView` 的 `ImportMenu` 在选完形态后填广告高度，条漫可填、页漫置 0
+- [x] 广告带裁剪与「跳过原因」的日志报告在 §1.3 已就位，本期未改
 
 ### 3.2 渲染注入内容（纯函数）
 
-新建 `crates/koharu-app/src/injection.rs`，把四段拼成一段文本：
+`crates/koharu-app/src/injection.rs`（新建，11 个测试）：
 
-1. 漫画级翻译指导（`settings.guidance`）
-2. 术语表渲染文本（`glossary::render`，只含命中条目）
-3. 章内上文（§3.4）
-4. 跨章上文（§3.5）
-5. 用户全局指导（`PipelineConfig.translation.instructions`，兜底）
-
-要点：
-
-- **服务商能力判断放在这里**。作用域管线在构造之前已读到当前配置，其中的模型选择包含服务商，所以判断渲染期即可，**零 pipeline 改动**。不支持提示词的三家（DeepL / Google Cloud / 彩云）直接不注入。
-- **四段的顺序是设计决定，尚未实测**。建议作为漫画级设置里的可调参数暴露，不要写死（见 `koharu-glossary-design.md` §3.2）。
-- **必须自带「不要翻译/不要输出这份清单」**。系统提示词里那句约束是随语境条目字段出现的，走附加说明通道时它不会出现。`glossary::render` 已经带了，上文拼进去时要一起带上。
-- 字节预算：人工资料 > 章内上文（从近到远丢）> 跨章上文（从最早丢）。截断静默，但界面要显示命中数与注入数。
-
-**测试**：全部纯函数。重点覆盖「服务商不支持时返回空」与「资料为空时不产生空段落」。
+- [x] 渲染是纯函数，不读文件也不读场景，四段拼成一段散文
+- [x] 段顺序做成 `Injection::order`，默认值在 `Segment::DEFAULT_ORDER`，可覆盖而不改渲染逻辑
+- [x] **服务商能力判断在这里**：`accepts_instructions(Provider)` 对 DeepL / Google Cloud / 彩云 返回
+      false，此时 `render` 返回空并把 `unsupported` 报给界面，让用户自己发现功能没生效是最差的处理
+- [x] **自带「不要翻译/不要输出」约束**：上文的抬头 `CONTEXT_HEADER` 与 `glossary::render` 的
+      HEADER 各带一份，两段来源共用一个抬头，所以一份就够
+- [x] 字节预算 `BUDGET`（8 KiB）：丢弃顺序为「章内最近→跨章最早」，人工资料永不丢
+- [x] `Rendered` 报出 `matched` / `injected` / `dropped`，因为截断本身是静默的
+- [x] 术语表顶层 `enabled` 的开关在界面上（`SeriesSettings.tsx`）：新建的表读回来是关闭的，没有这个
+      开关的话词条能改一辈子但永远进不了提示词
 
 ### 3.3 作用域管线接线
 
-`crates/koharu-app/src/commands/series.rs` 的 `process_series_chapters`（约 596 行）：
+**偏离文档：换掉的是配置，不是管线。**
 
-```
-批量开始前：
-  1. 以 PipelineConfig::load()?.read()?.clone() 为基线
-  2. config.translation.instructions = Some(render(...))
-  3. let scoped = Config::memory(config)
-  4. handle.manage(Pipeline::from_config(scoped, ProvidersConfig::load()?, device)?)
-逐章处理，全部结束后：
-  5. handle.manage(Pipeline::load(device)?)   // 恢复
-```
+`docs/series-translation-assets-audit.md` §3 给的五步是「构造作用域管线 → `handle.manage` 换上 → 结束后
+`Pipeline::load` 换回」。按字面实现会**在每批批量之后永久泄漏一个翻译器**：`Pipeline::from_config` spawn 的
+监听任务同时持有 `config` 句柄与 `translator`，而 `Config::memory` 的 watch 通道因为发送端也在任务手里，
+永远不会关闭，于是旧管线连同**已加载的本地模型权重**一直留在内存里。选本地模型时这意味着每跑一批就多占
+一份权重。
 
-**已确认的代价**（别重复踩）：`Pipeline::from_config` 会重建 `Translator`，而新的翻译器不知道任何已加载模型，**选用本地模型时这是一次完整的权重读盘**。批量按漫画维度触发，单次批量付一次。
+实际做法：**管线只有一条，跑在一份内存配置句柄上**。
 
-**一次渲染 vs 逐章渲染**：一次渲染需要**全部章的原文**做术语命中（`koharu-glossary-design.md` §4.3），所以批量开始前要预扫描逐章打开收集原文。预扫描同时用于跨章上文的基线（§3.5），两趟合一。
+- `app.rs` 的 `live_pipeline_config()` 以文件配置为起点建 `Config::memory`，`Pipeline::from_config` 订阅它
+- 每章开始前只改这一个字段（`apply_injection`），现有监听器热替换阶段运行器
+- 批内每章跑完刷新下一章的跨章上文
+- 全部结束后 `restore_user_config` **重新读一次**用户配置，而不是回滚到批开始时的快照——回滚会把批量期间
+  的设置改动从管线里抹掉
+
+代价：管线不再订阅配置文件，所以设置页保存时要显式推一次内存句柄（`preferences.rs` 的
+`publish_to_live_pipeline`）。
+
+收益，逐条对上文档里的顾虑：
+
+- 本地模型权重要么只读一次盘，要么一次也不读——文档里那条代价直接消失
+- 漫画资料与用户设置**各写各的**，不存在互相覆盖，设置页也不会短暂显示术语表
+- 逐章换上下文变成免费的，所以 §3.4 与 §3.5 都能按章生效
+- 仍然是公开 API 组合，`koharu-pipeline` 与 `koharu-scene` 一行未动
 
 ### 3.4 章内上文派生
 
-纯函数，只读场景：从当前页往前回溯 N 页（默认 4，可配），取已成对的原文与译文。
+**走的是语境条目通道，逐页生效。**
 
-- 「已翻好的」判定：优先 `Translation.text.origin` 为 `User` 的，其次 `Generated`
-- 页序用 `Snapshot::pages()` 的规范顺序
-- 预算满时从最近一页开始丢
+- [x] `koharu-pipeline/src/context.rs`（新）：`preceding_context(snapshot, page, pages)` 按
+      `Snapshot::pages()` 的规范顺序取**当前页之前**最近 N 页里成对的原文与译文
+- [x] `TranslationConfig.context_pages`（默认 4）由 `koharu-pipeline` 的翻译阶段就地消费
+- [x] 遇到没有译文的页就跳过，不为凑满条数继续往前找——回溯距离必须可预期
+- [x] 硬上限 `MAX_CONTEXT_PAGES = 12`，防止一个填错的值炸掉上下文窗口
+- [x] `trailing_context(snapshot, pages)` 取整章末尾 N 页，供跨章上文复用同一套判断
+- [x] 10 个单测覆盖窗口滑动、未翻页跳过、冷启动、两种译文来源、锚点缺失、上限截断
 
-**前置约束**：现在调度器用 `busy_stages: BTreeSet<Stage>` 保证翻译跨页串行（`scheduler.rs:106-108`），所以「上一页已提交」成立。**若将来改成并发（上游 PR #1097 想改成最多 4 页），这一项必须先改为按运行序号维护队列。**
+**为什么此前判它「不可达」是错的。** 审计 §3 与 `koharu-glossary-design.md` §3 都把语境条目列为不可达，
+理由是「赋值点在翻译阶段内部」。那个结论只覆盖了**从外部赋值**这一种方式。填充点内部并不在
+`extending-koharu.md` §2.8 列的三个封闭位置（阶段枚举、服务商宏、提示词函数）里，按 §3.2 属黄色。
+`koharu-translator` 一行未改——`TranslationRequest.context` 是 `pub` 字段，直接赋值即可，不必用那个
+只在测试里存在的 `with_context` 构造器。
+
+**数据为什么已经在场。** `Execution` 每次提交后 `self.scene = next`，而每个新任务拿的是最新场景，所以
+翻第 N 页时第 N−1 页的译文已经提交。`busy_stages` 按**阶段类型**记，因此同一时刻只有一个 Translation
+在跑——这不是碰巧成立，是结构性保证，也不依赖 `page_window` 的大小。
+
+**前置约束**：若上游把翻译改成章内跨页并发（`busy_stages` 拆成每页一份），`self.scene` 在启动第 N 页
+时可能还没含第 N−1 页的译文，「前 N 页」就不再等于「已翻好的前 N 页」，必须先改为按运行序号维护队列。
+
+**回溯单位是切片后的页。** 一张条漫长图导入时切成多个 band，每个 band 是场景里的一页，所以「前 4 页」
+是四个切片页，大约覆盖原长图的三分之一。这与翻译粒度一致。
 
 ### 3.5 跨章上文
 
-**上一章按章序号判定**，与用户勾选和执行的顺序无关（`koharu-glossary-design.md` §2.4）。
+- [x] 读 `injection::load_cross_chapter(dir, seq)`，按**目标章**的序号命名 `context-<seq>.json`，与
+      `series.json` 同级
+- [x] 写：预扫描逐章打开写基线（支持中断续跑）；批内每章处理完趁它还是活动项目时覆盖写给下一章
+- [x] 「上一章」按**章序号**判定（`SeriesAssets::successor`），与用户勾选和执行顺序无关
+- [x] 两级降级安静退化：文件不存在或损坏 → 无跨章上文；上一章没译文 → 退回人工资料；超预算 → 丢最早的
+- [x] 抽取复用 `koharu_pipeline::trailing_context`，与章内上文同一套判断，避免两条通道取舍不同
+- [x] 预扫描与「收集全部原文」共用同一趟，每章两次打开，与是否启用跨章上文无关
+- [x] 术语表坏了直接报错，不静默当成空表：用户以为在生效的术语表不见了，比一次失败更难排查
 
-`ProjectLibrary::open(name)` **返回带 `snapshot()` 的 `Project` 但不安装为活动项目**（`replace_project` 是另一次调用），所以可以打开任意章、读它的场景、丢弃，不打扰正在跑的那一章。
-
-两趟写入「目标章」的旁挂文件（与 `series.json` 同级）：
-
-- 预扫描：逐章打开 → 读双语尾部 → 按**序号 +1** 写入（这是「磁盘上已有译文」的基线，支持中断续跑）
-- 批量循环中：每章处理完，趁它还是活动项目时读自己的尾部 → 覆盖写入序号 +1 的那一章（鲜度更高）
-
-两级降级：上一章没有译文 → 无跨章上文；超出预算 → 从最早开始丢。**两项都安静退化，不报错。**
+**跨章上文在同批内能吃到鲜度**：注入内容在每章开始前渲染，而批内每章跑完就覆盖写给下一章，所以顺序递增
+时处理第 N 章读到的已是第 N−1 章刚跑完的译文。吃不到鲜度的是**章内**上下文（同一章内第 4 页看不到第 3
+页刚翻的结果），而那正是 §3.4 走语境条目通道解决掉的部分。
 
 ### 3.6 前端统一设置面板
 
-入口在**章节管理页**（`packages/koharu/components/series/SeriesView.tsx`），三个分区并列：
+入口在**章节管理页**，三个分区并列。`SeriesSettings.tsx` 是设置区本体，`AdBandField.tsx` 是广告高度输入
+（设置区与两个导入对话框共用一份，避免三处漂移）。
 
 | 分区 | 控件 | 用的命令 |
 | --- | --- | --- |
-| 条漫广告 | 首条/尾条两个数值输入 + 清除 | `getSeriesSettings` / `setSeriesSettings` |
+| 条漫广告 | 首条/尾条两个数值输入 + 清除，旁显示「本作品 N 章适用」 | `getSeriesSettings` / `setSeriesSettings` |
 | 翻译指导 | 多行文本域 | 同上 |
-| 术语表 | 词条列表（原文/译文/类别/启用/来源）+ 添加、导入、导出 | `getGlossary` / `setGlossary` |
+| 术语表 | 词条列表（原文/译文/类别/启用/来源标记/备注）+ 添加、导入、导出 | `getGlossary` / `setGlossary` |
 
 要点：
 
-- 状态走 **react-query**，与 `projectKey` 同级。项目切换时随既有刷新链路失效。**不要放全局 store**——它没有项目维度，切换项目时要额外清理，容易漏。
-- 写入模式照 `InferenceControl.tsx:162-179` 的 `saveOutput`（串行队列 + generation 守卫）或 `OutputPicker.tsx:62-101`（350ms 防抖 + 卸载 flush）。
-- 不做滑块：条漫动辄上万像素，滑块刻度精度不够，而且用户是照着画面里的实际位置输入的。
-- 顶部状态行显示「本作品 N 章适用」（广告带）与「本章命中 N 条术语」。
-- 文案新增一个顶层命名空间（如 `glossary`），插在字母序合适位置。**9 个语言文件都要手工加**（`packages/koharu/public/locales/`），没有提取工具。测试只校验 en-US。
+- 状态走 **react-query**，但 query key **不挂在 `seriesDetailKey` 下**：章列表带着同一份设置，挂在它下面
+  会让每次写入都把整张列表重取一遍
+- 写入模式：`useDebouncedSave`（350ms 防抖 + 卸载 flush），语义照 `OutputPicker.tsx:62-101`。判等与
+  「已提交」都按**序列化后的字符串**做，这样一次被拒的写入不会在每次渲染时重试同一份载荷——而用户按键盘
+  修不掉的失败（术语重复）是会发生的
+- `set_series_settings` 整体替换 `settings` 字段，所以 mutation 在写入时从 cache 读回 `glossary` 文件名。
+  发陈旧的 `null` 会抹掉索引里对磁盘上那个文件的引用
+- 术语表提交前过滤掉 `source` 为空的占位行：`validate_glossary` 直接拒绝空原文，一个空行会让整表保存失败
+- 词条 `id` 必须是 UUID（后端是 `GlossaryEntryId(Uuid)`），所以用 `crypto.randomUUID()` 而不是自造字符串
+- **两个导入对话框从 `DropdownMenu` 换成 `Popover`**：Base UI 的 menu typeahead 对任何单字符按键
+  `stopEvent`，`DropdownMenuContent` 里的数字输入框打不进字
+- 不做滑块：条漫动辄上万像素，滑块刻度精度不够，而且用户是照着画面里的实际位置输入的
+- 顶部状态行显示 `SeriesRun` 的命中数、注入数、丢弃数；`unsupported` 时明确提示当前服务商不接受提示词
+- 文案加在 `series` 命名空间下（`series.ad` / `series.context` / `series.glossary` / `series.import` /
+  `series.importAd` / `series.run` / `series.settings`），共 **52 个 key**，9 个语言文件都补齐。
+  `localization.test.ts` 校验的是 **9 个文件 key 集合完全相同**，不是「只校验 en-US」
+- 章内上文页数输入的上限镜像后端的 `MAX_CONTEXT_PAGES`，否则输入框能让用户填一个管线会静默截断的值；
+  索引里存的值超过上限时也按上限读
+- `SeriesSettings` 的 `Default` 是手写的而不是派生的：派生的 `u32` 会给 0，而 0 的语义是「不注入」，
+  那样升级过的漫画会静默失去这个功能
 
 ### 3.7 导入对话框
 
-- `import_series`（新建漫画）：首尾广告高度字段，**这是唯一无处可存的一次**
-- `import_series_chapter`（新增章节）：显示继承来的值 + 「沿用本漫画设置」开关；开关关掉后可编辑，本次使用编辑后的值，**不写回索引**
+- [x] `import_series`（新建漫画）：形态 + 首尾广告高度，**这是唯一无处可存的一次**
+- [x] `import_series_chapter`（新增章节）：「沿用本漫画的设置」开关默认开；关掉后露出两个数字输入
+- [x] 沿用传 `null`、改动传本次的值，**归属（写不写回索引）由后端决定**，前端不自己塞进 `setSeriesSettings`
 
 ---
 
@@ -185,15 +226,39 @@
 | 改 `SliceParams` 默认值 | 1600–2400 区间内 40px 气泡进模型后都是 19–29px，全部可用；降低上界是三项权衡里唯一全输的 |
 | 术语自动抽取 | 依赖专用 NER 模型（不引入权重），且撞封闭的阶段图；价值全在「人工确认」环节 |
 | 逐章覆盖广告高度 | 三项设置只有一份，不存在逐章覆盖，因此没有「某章广告设置是什么」这种需要查询的状态 |
-| 跨漫画批量 | `Pipeline::from_config` 每部漫画付一次本地模型重读盘 |
+| 跨漫画批量 | 每部漫画都要换一份注入内容，而换的动作是逐章写配置；跨漫画批量要先决定「按作品维度还是按章维度切换上下文」 |
 
 ---
 
-## 5. 提交前自查
+## 5. 本期新增的已知限制
 
-- [ ] `rustup component add rustfmt` 后 `cargo fmt -p koharu-app`
-- [ ] `cargo check -p koharu-app` 零警告
-- [ ] `cargo test -p koharu-app --lib` 全绿
-- [ ] 改了 Tauri 命令签名就重跑 `cargo run -p koharu-app --bin generate`
+1. **一次 API 请求只能翻译一页。** 一张长图切 9–15 片，每片一次请求，所以固定开销（system prompt）
+   重复约 8%。真正的重复大头是上文的滑动窗口（约占单次请求的一半）。**多页合并不可行**：
+   `StageCompletion` 只带一个 `page`，一次处理多页后调度器只标记第一页完成，后两页会被重新调度，而
+   第二次进 `process` 时译文已是 `Origin::User`，`translation.rs` 里的 `continue` 只跳过写入、请求照发。
+   要标记后两页完成就得改 `StageOutput` 与 `Committer::commit` 的公开签名。
+2. **回溯页数与字节预算**：页数用户可调（默认 4、上限 12），但 `injection.rs` 的 8 KiB 预算与段顺序
+   （`Injection::order` 已留好字段）未在界面暴露
+3. **广告高度的「清除」就是置 0**，没有「回到未设置」的状态——`AdBands` 只有两个数字，0 既是「没有」也是
+   「不设」
+4. **`SeriesRun.injected` 只统计跨章上文**：章内上文由翻译阶段逐页组装，条数不向上汇总。它的量由
+   `context_pages` 直接决定，用户自己知道
+
+---
+
+## 6. 提交前自查
+
+- [ ] `rustup component add rustfmt` 后 `cargo fmt -p koharu-app -p koharu-pipeline`
+- [x] `cargo check -p koharu-app` 零错误
+- [x] `cargo test -p koharu-app --lib` **48 passed**
+- [x] `cargo test -p koharu-pipeline` **64 passed** + 1 个 bin 测试
+- [x] 改了 Tauri 命令签名就重跑 `cargo run -p koharu-app --bin generate`
+- [x] 前端 `tsc --noEmit` 零错误；`oxlint` 零错误
+- [x] `vitest tests/lib/localization.test.ts` **5 passed**（9 个语言文件 key 集合一致）
+- [x] 未改 `koharu-scene` / `koharu-translator` / `koharu-ml` 的任何文件
+- [x] `koharu-pipeline` 只改了 `context.rs`（新增）、`config.rs` 加字段、`translation.rs` 填 `context`、
+      `lib.rs` 导出——全在 §3.2 黄色范围内，无红色改动
 - [ ] 新增组件/关系用了非 `dev.koharu.*` 的命名空间
-- [ ] 未改 `koharu-scene` / `koharu-pipeline` / `koharu-translator` / `koharu-ml` 的任何既有文件
+
+`tests/lib/runtime.test.ts` 有 4 个失败（`subscribe` 在 `waitFor` 的 1s 内没被调用），已用 `git stash` 确认是
+**改动前就存在**的失败，与本期无关。

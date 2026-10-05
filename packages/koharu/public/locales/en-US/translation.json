@@ -465,9 +465,68 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "Applies to {{count}} chapters in this series",
+      "clearHead": "Clear head",
+      "clearTail": "Clear tail",
+      "head": "Head (from top)",
+      "hint": "Heights are source-image pixels measured from each end; 0 means no band on that end. Changing them only affects later imports.",
+      "label": "Webtoon ad bands",
+      "tail": "Tail (from bottom)"
+    },
     "backToShelf": "Back to the shelf",
     "chapterCount": "{{count}} chapters",
+    "context": {
+      "hint": "Translating page N also sends the N previous pages as already-translated examples, so wording stays consistent. A page still untranslated is simply skipped. More pages cost more tokens; at most {{max}}.",
+      "pages": "In-chapter context pages",
+      "title": "In-chapter context"
+    },
     "empty": "This series has no chapters yet",
+    "glossary": {
+      "add": "Add entry",
+      "category": "Category",
+      "empty": "No entries yet.",
+      "enabled": "Enabled",
+      "entryCount": "{{count}} entries",
+      "export": "Export JSON",
+      "import": "Import JSON",
+      "importFailed": "That file is not a glossary.",
+      "kinds": {
+        "ability": "Ability",
+        "item": "Item",
+        "other": "Other",
+        "organization": "Organization",
+        "person": "Person",
+        "place": "Place",
+        "term": "Term"
+      },
+      "note": "Note",
+      "notePlaceholder": "When it applies",
+      "origin": {
+        "automatic": "Automatic",
+        "detected": "Detected",
+        "imported": "Imported",
+        "user": "Manual"
+      },
+      "rejected": "The glossary was not saved. Each source term must be unique within its category.",
+      "remove": "Remove entry {{name}}",
+      "source": "Source term",
+      "title": "Glossary",
+      "translation": "Translation",
+      "untitled": "untitled"
+    },
+    "import": {
+      "confirm": "Import series",
+      "kind": "Chapter type"
+    },
+    "importAd": {
+      "chooseChapter": "Choose a chapter",
+      "confirm": "Import chapter",
+      "inherit": "Use the series settings",
+      "inheritHint": "Turned off, these heights apply to this chapter only and are not written back to the series.",
+      "newSeriesHint": "The series does not exist yet, so these heights are stored with it. The settings panel takes over afterwards."
+    },
+    "importChapter": "New chapter",
     "kind": {
       "manga": "Pages",
       "webtoon": "Webtoon"
@@ -475,16 +534,27 @@
     "loading": "Loading…",
     "export": "Export",
     "fileCount": "{{count}} files",
-    "importChapter": "New chapter",
     "noCandidates": "No new chapters in the source folder",
     "pipeline": {
       "full": "Full run",
       "throughOcr": "Detect, OCR, translate",
       "translateOnly": "Translate only"
     },
+    "run": {
+      "dropped": "{{count}} dropped by the byte budget",
+      "summary": "Matched {{matched}} glossary terms · injected {{injected}} context entries",
+      "unsupported": "The current provider does not accept prompt instructions, so none of this reached the model."
+    },
     "selectAll": "Select all",
     "selectChapter": "Select {{name}}",
     "selectedCount": "{{count}} selected",
+    "settings": {
+      "description": "These three settings belong to this series only.",
+      "guidance": "Translation guidance",
+      "guidanceHint": "Injected into every chapter of this series, ahead of your global instructions.",
+      "guidancePlaceholder": "Style conventions, honorifics, formatting…",
+      "title": "Series settings"
+    },
     "status": {
       "done": "Done",
       "pending": "Pending",

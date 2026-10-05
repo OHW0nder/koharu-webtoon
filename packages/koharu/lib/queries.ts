@@ -11,10 +11,13 @@ import {
 
 import {
   commands,
+  type AdBands,
   type ChapterKind,
   type ExportFormat,
   type FontFamily,
+  type Glossary,
   type Operation,
+  type SeriesSettings,
 } from '@koharu/bridge/protocol'
 
 import { call } from './backend'
@@ -26,6 +29,10 @@ export const preparedPageKey = (page: string) => ['prepared-page', page] as cons
 export const fontsKey = ['fonts'] as const
 export const seriesKey = ['series'] as const
 export const seriesDetailKey = (id: string) => ['series', id] as const
+// Deliberately not under `seriesDetailKey`: the chapter list carries the same settings, and
+// invalidating it after every settings write would refetch the whole list on each keystroke.
+export const seriesSettingsKey = (id: string) => ['series-settings', id] as const
+export const seriesGlossaryKey = (id: string) => ['series-glossary', id] as const
 
 const projectQuery = queryOptions({
   queryKey: projectKey,
@@ -142,6 +149,65 @@ export function useSeriesDetail(id: string) {
   return useQuery(seriesDetailQuery(id))
 }
 
+export function useSeriesSettings(id: string) {
+  return useQuery({
+    queryKey: seriesSettingsKey(id),
+    queryFn: () => call(commands.getSeriesSettings, id),
+  })
+}
+
+/** The ad bands and the translation guidance, which are one index write and therefore one draft. */
+export function useSaveSeriesSettings(id: string) {
+  const mutation = useMutation({
+    mutationKey: ['set-series-settings', id],
+    // `set_series_settings` replaces the whole settings field, so the glossary file name is read
+    // back from the cache at write time: a payload carrying a stale `null` would drop the index's
+    // reference to a file that is still on disk.
+    mutationFn: (draft: Pick<SeriesSettings, 'ad' | 'guidance' | 'context_pages'>) => {
+      const current = queryClient.getQueryData<SeriesSettings>(seriesSettingsKey(id))
+      return call(commands.setSeriesSettings, id, {
+        ad: draft.ad,
+        guidance: draft.guidance,
+        context_pages: draft.context_pages,
+        glossary: current?.glossary ?? null,
+      })
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(seriesSettingsKey(id), saved)
+      // The chapter list carries the same settings and seeds the import dialog.
+      void refresh(seriesDetailKey(id))
+    },
+  })
+  return {
+    saveSettings: mutation.mutateAsync,
+    savingSettings: useIsMutating({ mutationKey: ['set-series-settings', id] }) > 0,
+  }
+}
+
+export function useGlossary(id: string) {
+  return useQuery({
+    queryKey: seriesGlossaryKey(id),
+    queryFn: () => call(commands.getGlossary, id),
+  })
+}
+
+export function useSaveGlossary(id: string) {
+  const mutation = useMutation({
+    mutationKey: ['set-glossary', id],
+    mutationFn: (glossary: Glossary) => call(commands.setGlossary, id, glossary),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(seriesGlossaryKey(id), saved)
+      // Saving also points the index at the file, so the settings the panel reads have to come
+      // back before the next settings write reads the glossary name from the cache.
+      void refresh(seriesSettingsKey(id), seriesDetailKey(id))
+    },
+  })
+  return {
+    saveGlossary: mutation.mutateAsync,
+    savingGlossary: useIsMutating({ mutationKey: ['set-glossary', id] }) > 0,
+  }
+}
+
 export function useSeriesCandidates(id: string) {
   return useQuery({
     queryKey: [...seriesDetailKey(id), 'candidates'],
@@ -152,8 +218,10 @@ export function useSeriesCandidates(id: string) {
 export function useImportSeriesChapter(id: string) {
   const mutation = useMutation({
     mutationKey: ['import-series-chapter', id],
-    mutationFn: (input: { name: string; kind: ChapterKind }) =>
-      call(commands.importSeriesChapter, id, input.name, input.kind),
+    // `ad: null` inherits the series settings; a value applies to this one import and is
+    // deliberately not written back to the index. The backend owns that decision either way.
+    mutationFn: (input: { name: string; kind: ChapterKind; ad: AdBands | null }) =>
+      call(commands.importSeriesChapter, id, input.name, input.kind, input.ad),
     onSuccess: () => refresh(seriesDetailKey(id), seriesKey),
   })
   return {
@@ -192,11 +260,14 @@ export function useImportSeries() {
   // so it can open the new chapter list instead of making the user find it again.
   const mutation = useMutation({
     mutationKey: ['import-series'],
-    mutationFn: (kind: ChapterKind) => call(commands.importSeries, kind),
+    // The ad bands are part of the first import because the series does not exist yet, so the
+    // index has nowhere to keep them.
+    mutationFn: (input: { kind: ChapterKind; ad: AdBands }) =>
+      call(commands.importSeries, input.kind, input.ad),
     onSuccess: () => refresh(seriesKey, projectKey, pagesKey, pageKey),
   })
   return {
-    importSeries: (kind: ChapterKind) => mutation.mutateAsync(kind),
+    importSeries: (input: { kind: ChapterKind; ad: AdBands }) => mutation.mutateAsync(input),
     importing: useIsMutating({ mutationKey: ['import-series'] }) > 0,
   }
 }

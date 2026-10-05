@@ -15,6 +15,22 @@ use crate::commands::{
     series::SeriesLibrary,
 };
 
+/// 管线跑的那份配置句柄。
+///
+/// 用户设置落在 `~/.koharu/config.toml` 里，那份文件句柄是**用户的**：设置页读写它，漫画级的注入内容
+/// 绝不能写进去，否则一部漫画的术语表会变成所有作品的全局指令。
+///
+/// 所以管线跑在一条内存句柄上，以文件句柄的当前值为起点。`save_preferences` 在用户改设置时把新值同步
+/// 进来，管线因此照样热更新；`process_series_chapters` 在每章开始时把该章的注入内容写进来，跑完整批再把
+/// 句柄恢复成用户配置。
+///
+/// 换掉的是**配置**而不是管线：重建管线会连翻译器一起重建，新的翻译器不知道任何已加载模型，选本地模型时
+/// 那是一次完整的权重读盘。改这份配置只是重建阶段运行器，它和翻译器共用同一个已加载模型。
+pub(crate) fn live_pipeline_config() -> Result<koharu_config::Config<koharu_pipeline::PipelineConfig>> {
+    let baseline = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
+    Ok(koharu_config::Config::memory(baseline))
+}
+
 #[tracing::instrument(
     target = "koharu_metrics",
     name = "app_started",
@@ -32,7 +48,13 @@ pub(crate) async fn initialize(handle: AppHandle<CefRuntime>) -> Result<()> {
         "gpu_model": device.description.clone(),
         "vram_bytes": device.memory_total,
     }));
-    let pipeline = koharu_pipeline::Pipeline::load(device)?;
+    let pipeline_config = live_pipeline_config()?;
+    handle.manage(pipeline_config.clone());
+    let pipeline = koharu_pipeline::Pipeline::from_config(
+        pipeline_config,
+        koharu_translator::ProvidersConfig::load()?,
+        device,
+    )?;
     handle.manage(pipeline.clone());
 
     let mut resources = pipeline.subscribe_resources();

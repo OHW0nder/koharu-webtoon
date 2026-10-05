@@ -465,9 +465,67 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "套用於這部漫畫的 {{count}} 個章節",
+      "clearHead": "清除首條",
+      "clearTail": "清除末條",
+      "head": "首條（自頂端起）",
+      "hint": "高度為來源圖的像素值，從各自端點起算；0 表示該端沒有廣告條。修改只影響後續匯入。",
+      "label": "條漫廣告條",
+      "tail": "末條（自底部起）"
+    },
     "backToShelf": "返回漫畫櫃",
     "chapterCount": "{{count}} 章",
+    "context": {
+      "hint": "翻譯第 N 頁時會一併傳送前 N 頁已翻好的雙語對照，讓措辭保持一致。尚未翻譯的頁會直接跳過。頁數越多消耗的 token 越多，上限 {{max}} 頁。",
+      "pages": "章內上文頁數",
+      "title": "章內上文"
+    },
     "empty": "這部漫畫還沒有章節",
+    "glossary": {
+      "add": "新增項目",
+      "category": "分類",
+      "empty": "尚無項目。",
+      "enabled": "已啟用",
+      "entryCount": "{{count}} 個項目",
+      "export": "匯出 JSON",
+      "import": "匯入 JSON",
+      "importFailed": "該檔案不是用語表。",
+      "kinds": {
+        "ability": "能力",
+        "item": "道具",
+        "other": "其他",
+        "organization": "組織",
+        "person": "人物",
+        "place": "地點",
+        "term": "術語"
+      },
+      "note": "備註",
+      "notePlaceholder": "適用情形",
+      "origin": {
+        "automatic": "自動",
+        "detected": "已偵測",
+        "imported": "已匯入",
+        "user": "手動"
+      },
+      "rejected": "用語表未儲存。每個分類內的原文術語必須唯一。",
+      "remove": "移除項目 {{name}}",
+      "source": "原文術語",
+      "title": "用語表",
+      "translation": "譯文",
+      "untitled": "未命名"
+    },
+    "import": {
+      "confirm": "匯入漫畫",
+      "kind": "章節類型"
+    },
+    "importAd": {
+      "chooseChapter": "選擇章節",
+      "confirm": "匯入章節",
+      "inherit": "沿用漫畫設定",
+      "inheritHint": "關閉後，這些高度只作用於本章，不會寫回漫畫設定。",
+      "newSeriesHint": "這部漫畫還不存在，因此這些高度會隨著它一起儲存。之後由設定面板接手。"
+    },
     "kind": {
       "manga": "頁漫",
       "webtoon": "條漫"
@@ -482,9 +540,21 @@
       "throughOcr": "偵測、OCR、翻譯",
       "translateOnly": "僅翻譯"
     },
+    "run": {
+      "dropped": "受位元組預算限制，捨棄 {{count}} 筆",
+      "summary": "符合 {{matched}} 筆術語 · 注入 {{injected}} 筆上文",
+      "unsupported": "目前的服務提供者不接受提示指令，因此這些內容都沒有傳給模型。"
+    },
     "selectAll": "全選",
     "selectChapter": "選擇 {{name}}",
     "selectedCount": "已選 {{count}} 章",
+    "settings": {
+      "description": "這三項設定只屬於這部漫畫。",
+      "guidance": "翻譯指引",
+      "guidanceHint": "會注入這部漫畫的每個章節，置於全域指令之前。",
+      "guidancePlaceholder": "文風慣例、敬稱、格式…",
+      "title": "漫畫設定"
+    },
     "status": {
       "done": "已完成",
       "pending": "待匯入",

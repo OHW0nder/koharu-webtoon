@@ -465,9 +465,67 @@
     }
   },
   "series": {
+    "ad": {
+      "appliesTo": "应用于这部漫画的 {{count}} 个章节",
+      "clearHead": "清除首条",
+      "clearTail": "清除尾条",
+      "head": "首条（从顶端起）",
+      "hint": "高度以源图像素为单位，从各自端点起算；0 表示该端没有广告带。修改只影响后续导入。",
+      "label": "条漫广告带",
+      "tail": "尾条（从底端起）"
+    },
     "backToShelf": "返回漫画柜",
     "chapterCount": "{{count}} 章",
+    "context": {
+      "hint": "翻译第 N 页时会一并发送前 N 页已翻好的双语对照，让措辞保持一致。还没翻的页直接跳过。页数越多消耗的 token 越多，上限 {{max}} 页。",
+      "pages": "章内上文页数",
+      "title": "章内上文"
+    },
     "empty": "这部漫画还没有章节",
+    "glossary": {
+      "add": "添加条目",
+      "category": "分类",
+      "empty": "还没有条目。",
+      "enabled": "已启用",
+      "entryCount": "{{count}} 个条目",
+      "export": "导出 JSON",
+      "import": "导入 JSON",
+      "importFailed": "该文件不是术语表。",
+      "kinds": {
+        "ability": "能力",
+        "item": "道具",
+        "other": "其他",
+        "organization": "组织",
+        "person": "人物",
+        "place": "地点",
+        "term": "术语"
+      },
+      "note": "备注",
+      "notePlaceholder": "适用情形",
+      "origin": {
+        "automatic": "自动",
+        "detected": "已识别",
+        "imported": "已导入",
+        "user": "手动"
+      },
+      "rejected": "术语表未保存。每个分类内的原文术语必须唯一。",
+      "remove": "移除条目 {{name}}",
+      "source": "原文术语",
+      "title": "术语表",
+      "translation": "译文",
+      "untitled": "未命名"
+    },
+    "import": {
+      "confirm": "导入漫画",
+      "kind": "章节类型"
+    },
+    "importAd": {
+      "chooseChapter": "选择章节",
+      "confirm": "导入章节",
+      "inherit": "沿用漫画设置",
+      "inheritHint": "关闭后，这些高度只作用于本章，不会写回漫画设置。",
+      "newSeriesHint": "这部漫画还不存在，因此这些高度会随它一起保存。之后由设置面板接管。"
+    },
     "kind": {
       "manga": "页漫",
       "webtoon": "条漫"
@@ -482,9 +540,21 @@
       "throughOcr": "检测、OCR、翻译",
       "translateOnly": "仅翻译"
     },
+    "run": {
+      "dropped": "受字节预算限制，丢弃 {{count}} 条",
+      "summary": "匹配 {{matched}} 条术语 · 注入 {{injected}} 条上文",
+      "unsupported": "当前服务商不接受提示词指令，因此这些内容都没有传给模型。"
+    },
     "selectAll": "全选",
     "selectChapter": "选择 {{name}}",
     "selectedCount": "已选 {{count}} 章",
+    "settings": {
+      "description": "这三项设置仅属于这部漫画。",
+      "guidance": "翻译指导",
+      "guidanceHint": "会注入这部漫画的每个章节，位于全局指令之前。",
+      "guidancePlaceholder": "风格约定、敬称、格式…",
+      "title": "漫画设置"
+    },
     "status": {
       "done": "已完成",
       "pending": "待导入",

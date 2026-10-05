@@ -178,6 +178,12 @@ pub struct TranslationConfig {
     #[specta(type = String)]
     pub target_language: Language,
     pub instructions: Option<String>,
+    /// 章内上文回溯的页数：翻译第 N 页时带上第 N−1 至第 N−N 页的成对双语对照。0 表示不注入。
+    ///
+    /// 走的是语境条目通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的全部意义在于
+    /// 逐页不同（见 `context` 模块）。值由漫画级设置给出，上限是 [`crate::MAX_CONTEXT_PAGES`]。
+    #[serde(default = "default_context_pages")]
+    pub context_pages: u32,
 }
 
 impl Default for TranslationConfig {
@@ -187,8 +193,14 @@ impl Default for TranslationConfig {
             generation: GenerationConfig::default(),
             target_language: Language::English,
             instructions: None,
+            context_pages: default_context_pages(),
         }
     }
+}
+
+/// 章内上文的默认回溯页数。4 取自社区实现，合适的距离取决于模型与作品，只能实测确定。
+fn default_context_pages() -> u32 {
+    4
 }
 
 impl PipelineConfig {
