@@ -87,6 +87,8 @@ pub(super) enum Imported {
     Strip {
         /// The uncut image, retained so the strip can be cut again with other boundaries.
         source: Arc<[u8]>,
+        /// The media type of the uncut image, needed to store it as a project's asset.
+        format: ImageFormat,
         width: u32,
         height: u32,
         bands: Vec<Band>,
@@ -125,9 +127,21 @@ fn decode(path: &Path, source: EncodedPage) -> Result<Page> {
     })
 }
 
-pub(super) fn import(paths: Vec<PathBuf>, slicing: Slicing) -> Result<Vec<Imported>> {
-    let pages = read(paths)?;
-    Ok(cut(pages, slicing))
+/// Reads every supported page source, leaving each image whole.
+///
+/// A tall image becomes exactly one page here no matter how tall it is. Dividing long strips is
+/// the webtoon importer's job, and it is a separate entry point so that this path stays the
+/// upstream command's behaviour.
+pub(super) fn import(paths: Vec<PathBuf>) -> Result<Vec<Page>> {
+    read(paths)
+}
+
+/// Reads every supported page source and divides the tall ones into pages.
+///
+/// The geometry gate lives in the planner, so forcing a cut relaxes the gate rather than adding a
+/// second cutting path: an ordinary page still produces exactly one page.
+pub(super) fn import_webtoon(paths: Vec<PathBuf>, slicing: Slicing) -> Result<Vec<Imported>> {
+    Ok(cut(read(paths)?, slicing))
 }
 
 /// Reads and sorts every supported page source without deciding how tall images are divided.
@@ -210,6 +224,7 @@ fn cut_one(page: Page, params: &SliceParams) -> Imported {
     match band(&page, &image, &plan) {
         Ok(bands) => Imported::Strip {
             source: page.bytes,
+            format: page.format,
             width: plan.width,
             height: plan.height,
             bands,
@@ -364,7 +379,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("{stem} is missing from the import"))
         }
 
-        let imported = import(paths.clone(), Slicing::Auto).expect("import fixtures");
+        // The upstream import leaves every image whole, however tall it is: dividing strips is the
+        // webtoon importer's job, so the upstream command's behaviour is unchanged.
+        let plain = import(paths.clone()).expect("import fixtures");
+        let mut heights = plain.iter().map(|page| page.height).collect::<Vec<_>>();
+        heights.sort_unstable();
+        assert_eq!(heights, vec![1600, 6000]);
+
+        let imported = import_webtoon(paths.clone(), Slicing::Auto).expect("import fixtures");
         assert!(matches!(split(&imported, "page"), Imported::Page(page) if page.height == 1600));
         let Imported::Strip {
             width,
@@ -392,7 +414,7 @@ mod tests {
 
         // Forcing relaxes the aspect gate without producing a second cutting path: an ordinary
         // page still arrives whole, because the planner finds no legal cut for it.
-        let forced = import(paths, Slicing::Forced).expect("import fixtures");
+        let forced = import_webtoon(paths, Slicing::Forced).expect("import fixtures");
         assert!(matches!(split(&forced, "page"), Imported::Page(page) if page.height == 1600));
         assert!(
             matches!(split(&forced, "chapter"), Imported::Strip { bands, .. } if bands.len() > 1)

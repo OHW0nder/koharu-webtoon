@@ -105,6 +105,16 @@ export function useImportPages() {
   return { importPages: run, importing: busy }
 }
 
+export function useImportWebtoonPages() {
+  const { run, busy } = useCommand(
+    ['import-webtoon-pages'],
+    commands.importWebtoon,
+    'navigator.importing',
+    () => refresh(projectKey, pagesKey, pageKey),
+  )
+  return { importWebtoonPages: run, importing: busy }
+}
+
 export async function refresh(...keys: QueryKey[]): Promise<void> {
   await Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
 }

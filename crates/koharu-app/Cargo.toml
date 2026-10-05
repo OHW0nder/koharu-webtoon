@@ -35,6 +35,7 @@ open = { workspace = true }
 parking_lot = { workspace = true }
 rayon = { workspace = true }
 rars = { workspace = true }
+revision = { workspace = true }
 rfd = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

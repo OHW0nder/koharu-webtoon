@@ -1,11 +1,9 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use image::ImageFormat;
 use koharu_desktop::{CanvasState, Desktop};
-use koharu_scene::{
-    AssetInput, AssetMetadata, AssetRole, At, PageDraft, PageSliceDraft, SliceSourceInput,
-};
+use koharu_scene::{AssetInput, AssetMetadata, AssetRole, At, PageDraft};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -25,6 +23,7 @@ use super::{
         CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary, ProjectSummary,
     },
 };
+use crate::webtoon;
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct StartupState {
@@ -44,33 +43,6 @@ pub struct PageSelection {
 pub enum PageImportSource {
     Files,
     Folder,
-}
-
-/// How an import treats images that are far taller than they are wide.
-///
-/// Slicing is a property of the source, not a mode of the session, so this is a parameter of
-/// the one import command rather than a second command: two commands would duplicate the file
-/// dialog, the processing guard, the commit, and the canvas synchronization, and the copies
-/// would drift.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum PageImportSlicing {
-    /// Cut an image when its own geometry says it is a webtoon. The default, so ordinary
-    /// imports need no decision from the user.
-    #[default]
-    Auto,
-    /// Cut anything taller than a single page, for strips whose aspect ratio did not trip the
-    /// automatic gate.
-    Forced,
-}
-
-impl From<PageImportSlicing> for Slicing {
-    fn from(value: PageImportSlicing) -> Self {
-        match value {
-            PageImportSlicing::Auto => Self::Auto,
-            PageImportSlicing::Forced => Self::Forced,
-        }
-    }
 }
 
 pub(crate) struct Initialization {
@@ -392,33 +364,94 @@ async fn close_current_project(handle: &AppHandle<CefRuntime>) -> Result<()> {
     target = "koharu_metrics",
     name = "import",
     skip_all,
-    fields(origin = "user", method = ?source, slicing = ?slicing),
+    fields(origin = "user", method = ?source),
 )]
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn import(
     source: PageImportSource,
-    slicing: Option<PageImportSlicing>,
     window: WebviewWindow<CefRuntime>,
     desktop: State<'_, Desktop>,
     project: State<'_, CurrentProject>,
     processing: State<'_, Processing>,
     canvas_channel: State<'_, CanvasChannel>,
 ) -> std::result::Result<(), Error> {
-    // Tauri deserializes command arguments field by field and never consults the argument
-    // type's `Default`, so a required parameter fails every caller that omits it. No control
-    // for this exists yet, and omitting it means the automatic geometry gate, which is what an
-    // ordinary import wants regardless.
-    let slicing = slicing.unwrap_or_default();
-    if !processing.stops.lock().is_empty() {
-        return Err(anyhow::anyhow!("pages cannot be imported while processing is running").into());
+    reject_import_while_processing(&processing)?;
+    let Some(files) = select_import_paths(source, &window).await? else {
+        return Ok(());
+    };
+    let imported = tokio_rayon::spawn(move || import::import(files)).await?;
+    let page_count = imported.len();
+
+    let (commit, page) = {
+        let mut project = project.project.lock().await;
+        let project = project.as_mut().context("no project is open")?;
+        let role = AssetRole::new("source")?;
+        let patch = project.snapshot().patch(|edit| {
+            for page in imported {
+                let (bytes, format, width, height) = parts(&page);
+                let id = edit.add_page(
+                    PageDraft::new(page.name, f64::from(width), f64::from(height)),
+                    At::End,
+                )?;
+                edit.set_asset(
+                    id,
+                    &role,
+                    AssetInput::new(
+                        bytes,
+                        format.to_mime_type(),
+                        AssetMetadata {
+                            width: Some(width),
+                            height: Some(height),
+                            attributes: Default::default(),
+                        },
+                    ),
+                )?;
+            }
+            Ok(())
+        })?;
+        let commit = project.session.commit(patch).await?;
+        project.record(vec![commit.revision]);
+        project.reconcile_page();
+        let page = project.active_page();
+        (commit, page)
+    };
+    desktop.synchronize(&commit.snapshot, page, &commit).await?;
+    let canvas = desktop.canvas_state();
+    canvas_channel.channel.publish(canvas);
+    tracing::info!(target: "koharu_metrics", metric = "page_imported", page_count);
+    Ok(())
+}
+
+/// Splits an imported page into the parts a page draft and its asset are built from.
+fn parts(page: &import::Page) -> (Arc<[u8]>, ImageFormat, u32, u32) {
+    (page.bytes.clone(), page.format, page.width, page.height)
+}
+
+/// Rejects a page import while a processing job is running, because both contend for the same
+/// commit sequence.
+fn reject_import_while_processing(processing: &Processing) -> std::result::Result<(), Error> {
+    if processing.stops.lock().is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("pages cannot be imported while processing is running").into())
     }
+}
+
+/// Opens the picker and returns the paths to import, or `None` when the user cancels.
+///
+/// Both import commands share this one picker, so the file filter, the recursion policy and the
+/// "nothing importable was selected" failure are defined once.
+async fn select_import_paths(
+    source: PageImportSource,
+    window: &WebviewWindow<CefRuntime>,
+) -> Result<Option<Vec<PathBuf>>> {
     let extensions = import::Format::iter()
         .flat_map(|format| format.get_serializations())
         .collect::<Vec<_>>();
     let dialog = rfd::AsyncFileDialog::new()
         .add_filter("Images, archives, and PDF", &extensions)
-        .set_parent(&window);
+        .set_parent(window);
     let files = match source {
         PageImportSource::Files => dialog.pick_files().await.map(|files| {
             files
@@ -447,12 +480,45 @@ pub(crate) async fn import(
         }),
     };
     let Some(files) = files else {
-        return Ok(());
+        return Ok(None);
     };
     if files.is_empty() {
-        return Err(anyhow::anyhow!("no supported images were found in the selection").into());
+        anyhow::bail!("no supported images were found in the selection");
     }
-    let imported = tokio_rayon::spawn(move || import::import(files, slicing.into())).await?;
+    Ok(Some(files))
+}
+
+/// Imports a webtoon, dividing images that are far taller than they are wide into pages.
+///
+/// This is a path of its own rather than another parameter on the upstream import command. That
+/// command keeps its signature, so the generated frontend protocol does not diverge from
+/// upstream; the two paths share the picker, the commit and the canvas synchronization, and
+/// differ only in how a tall image becomes pages.
+#[tracing::instrument(
+    level = "info",
+    skip_all,
+    fields(origin = "user", method = ?source, slicing = ?slicing),
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn import_webtoon(
+    source: PageImportSource,
+    slicing: Option<webtoon::PageImportSlicing>,
+    window: WebviewWindow<CefRuntime>,
+    desktop: State<'_, Desktop>,
+    project: State<'_, CurrentProject>,
+    processing: State<'_, Processing>,
+    canvas_channel: State<'_, CanvasChannel>,
+) -> std::result::Result<(), Error> {
+    // Tauri deserializes command arguments field by field and never consults the argument type's
+    // `Default`, so a required parameter fails every caller that omits it. Omitting this one means
+    // the automatic geometry gate, which is what an ordinary webtoon import wants.
+    let slicing = slicing.unwrap_or_default();
+    reject_import_while_processing(&processing)?;
+    let Some(files) = select_import_paths(source, &window).await? else {
+        return Ok(());
+    };
+    let imported = tokio_rayon::spawn(move || import::import_webtoon(files, slicing.into())).await?;
     let page_count: usize = imported
         .iter()
         .map(|entry| match entry {
@@ -464,7 +530,7 @@ pub(crate) async fn import(
     let (commit, page) = {
         let mut project = project.project.lock().await;
         let project = project.as_mut().context("no project is open")?;
-        let source = AssetRole::new("source")?;
+        let role = AssetRole::new("source")?;
         let patch = project.snapshot().patch(|edit| {
             for entry in imported {
                 match entry {
@@ -476,7 +542,7 @@ pub(crate) async fn import(
                         )?;
                         edit.set_asset(
                             id,
-                            &source,
+                            &role,
                             AssetInput::new(
                                 bytes,
                                 format.to_mime_type(),
@@ -489,14 +555,21 @@ pub(crate) async fn import(
                         )?;
                     }
                     Imported::Strip {
-                        source: uncut,
+                        source,
+                        format,
                         width,
                         height,
                         bands,
                     } => {
-                        edit.add_page_slices(
-                            SliceSourceInput::new(uncut, f64::from(width), f64::from(height)),
-                            bands.into_iter().map(page_slice_draft).collect(),
+                        webtoon::add_strip(
+                            edit,
+                            webtoon::StripInput {
+                                bytes: source,
+                                width: f64::from(width),
+                                height: f64::from(height),
+                                media_type: format.to_mime_type().to_owned(),
+                                bands: bands.into_iter().map(band_input).collect(),
+                            },
                             At::End,
                         )?;
                     }
@@ -517,27 +590,29 @@ pub(crate) async fn import(
     Ok(())
 }
 
-/// Splits an imported page into the parts a page draft and its asset are built from.
-fn parts(page: &import::Page) -> (Arc<[u8]>, ImageFormat, u32, u32) {
-    (page.bytes.clone(), page.format, page.width, page.height)
+/// Turns a band the import planner produced into the extension layer's input.
+///
+/// The band's pixels are already cropped and re-encoded, so only its position in the source and
+/// its own height are left to carry over; the width comes from the source because bands are cut
+/// across the full width.
+fn band_input(band: Band) -> webtoon::BandInput {
+    let page = band.page;
+    webtoon::BandInput {
+        label: page.name,
+        y_offset: f64::from(band.y_offset),
+        height: f64::from(page.height),
+        bytes: page.bytes,
+        media_type: page.format.to_mime_type().to_owned(),
+    }
 }
 
-fn page_slice_draft(band: Band) -> PageSliceDraft {
-    let (bytes, format, width, height) = parts(&band.page);
-    PageSliceDraft::new(
-        band.page.name,
-        f64::from(band.y_offset),
-        f64::from(height),
-        AssetInput::new(
-            bytes,
-            format.to_mime_type(),
-            AssetMetadata {
-                width: Some(width),
-                height: Some(height),
-                attributes: Default::default(),
-            },
-        ),
-    )
+impl From<webtoon::PageImportSlicing> for Slicing {
+    fn from(value: webtoon::PageImportSlicing) -> Self {
+        match value {
+            webtoon::PageImportSlicing::Auto => Self::Auto,
+            webtoon::PageImportSlicing::Forced => Self::Forced,
+        }
+    }
 }
 
 #[tracing::instrument(

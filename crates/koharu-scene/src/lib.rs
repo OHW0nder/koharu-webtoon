@@ -24,12 +24,11 @@ pub use change::{
 };
 pub use component::{Component, ValidationContext};
 pub use components::{
-    Asset, AssetInput, AssetMetadata, AssetRole, Authored, DetectionAnalysis, DetectionLabel,
-    EntityOrigin, FontStyle, Generation, Geometry, Group, LanguageTag, OcrAnalysis, Origin, Page,
-    PageDraft, PageSlice, PageSliceDraft, Point, Project, RasterLayer, RasterLayerKind, Region,
-    RegionKind, Relation, RelationKind, SliceSource, SliceSourceInput, SourceText, TextAlignment,
-    TextContent, TextDirection, TextGroup, TextLayout, TextLayoutKind, TextRole, Translation,
-    Typography, Visibility, WritingMode,
+    Asset, AssetInput, AssetMetadata, AssetRole, Assets, Authored, DetectionAnalysis,
+    DetectionLabel, EntityOrigin, FontStyle, Generation, Geometry, Group, LanguageTag, OcrAnalysis,
+    Origin, Page, PageDraft, Point, Project, RasterLayer, RasterLayerKind, Region, RegionKind,
+    Relation, RelationKind, SourceText, TextAlignment, TextContent, TextDirection, TextGroup,
+    TextLayout, TextLayoutKind, TextRole, Translation, Typography, Visibility, WritingMode,
 };
 pub use document::{AnalysisRegionRef, GroupRef, TextContentRef, TextLayerRef};
 pub use edit::{At, Edit, RemovePolicy};
@@ -38,7 +37,7 @@ pub use id::{EntityId, ProducerId, ProjectId, RelationId};
 pub use patch::Patch;
 pub use semantics::{
     BubbleRegion, FitsTo, FlowsIn, FunctionalRelation, Inside, PanelRegion, Presents,
-    RecognizedFrom, RegionSpec, RelationSpec, SliceOf, TextRegion,
+    RecognizedFrom, RegionSpec, RelationSpec, TextRegion,
 };
 pub use session::{Commit, Session};
 pub use snapshot::{EntityRef, PageRef, RelationRef, Snapshot};

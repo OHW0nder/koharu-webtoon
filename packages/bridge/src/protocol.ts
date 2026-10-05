@@ -40,6 +40,19 @@ export const commands = {
 	deleteProject: (name: string) => __TAURI_INVOKE<null>("delete_project", { name }),
 	closeProject: () => __TAURI_INVOKE<null>("close_project"),
 	import: (source: PageImportSource) => __TAURI_INVOKE<null>("import", { source }),
+	/**
+	 *  Imports a webtoon, dividing images that are far taller than they are wide into pages.
+	 * 
+	 *  This is a path of its own rather than another parameter on the upstream import command. That
+	 *  command keeps its signature, so the generated frontend protocol does not diverge from
+	 *  upstream; the two paths share the picker, the commit and the canvas synchronization, and
+	 *  differ only in how a tall image becomes pages.
+	 */
+	importWebtoon: (source: PageImportSource, slicing: 
+/**  图片自身几何像条漫时才切。这是默认值，普通导入不需要用户做任何决定。 */
+"auto" | 
+/**  切所有高于一页的图片，用于长宽比没触到自动门限的条漫。 */
+"forced" | null) => __TAURI_INVOKE<null>("import_webtoon", { source, slicing }),
 	selectPage: (page: EntityId) => __TAURI_INVOKE<PageSelection>("select_page", { page }).then((v) => (({...v,page:({...v.page,layers:v.page.layers.map(i=>i),regions:v.page.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))})}) as typeof v)),
 	renamePage: (page: EntityId, label: string) => __TAURI_INVOKE<null>("rename_page", { page, label }),
 	deletePages: (pages: EntityId[]) => __TAURI_INVOKE<null>("delete_pages", { pages }),
@@ -264,6 +277,33 @@ export type InpaintingModel = { model: "lama" } | { model: "aot-inpainting" } | 
 	model: "rorem-mixed",
 } & RoremMixedConfig;
 
+/**
+ *  Where a page is placed inside the fixed square model input.
+ * 
+ *  This is an inference policy rather than a checkpoint property: RF-DETR's
+ *  backbone asserts a square input, so every page geometry has to be mapped
+ *  onto one, and the mapping changes the input distribution the checkpoint
+ *  sees. It therefore travels with the inference call instead of arriving
+ *  through the checkpoint's configuration.
+ * 
+ *  The variant names are the single spelling shared by the TOML configuration,
+ *  the generated TypeScript protocol and the command line, so a user never has
+ *  to learn two words for one setting.
+ */
+export type InputFit = 
+/**
+ *  Scale by a single isotropic gain and centre the content, padding the
+ *  remainder. Preserves panel and speech-bubble proportions, at the cost of
+ *  spending model input on margins.
+ */
+"letter_box" | 
+/**
+ *  Scale each axis independently to fill the square. Spends every model
+ *  pixel on the page but distorts geometry, which is what the checkpoint
+ *  was trained on.
+ */
+"stretch";
+
 export type Job = {
 	id: JobId,
 	state: JobState,
@@ -283,6 +323,15 @@ export type KoharuLayoutRFDetrSeg2XLConfig = {
 	text_threshold?: number | null,
 	bubble_threshold?: number | null,
 	panel_threshold?: number | null,
+	/**
+	 *  How a page is mapped onto RF-DETR's fixed square input.
+	 * 
+	 *  The checkpoint was trained on stretched pages, so `stretch` reproduces the
+	 *  training distribution and `letter_box` trades a little of that fidelity for
+	 *  undistorted panel and bubble proportions. Absent means the default, so an
+	 *  existing configuration keeps loading unchanged.
+	 */
+	input_fit?: InputFit,
 };
 
 export type LanguageChoice = {
@@ -355,6 +404,13 @@ export type Page = {
 	layers: Layer[],
 	regions: AnalysisRegion[],
 };
+
+/**  条漫导入如何处理远高于宽度的图片。 */
+export type PageImportSlicing = 
+/**  图片自身几何像条漫时才切。这是默认值，普通导入不需要用户做任何决定。 */
+"auto" | 
+/**  切所有高于一页的图片，用于长宽比没触到自动门限的条漫。 */
+"forced";
 
 export type PageImportSource = "files" | "folder";
 

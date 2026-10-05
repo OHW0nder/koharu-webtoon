@@ -1,7 +1,7 @@
 'use client'
 
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { FilePlus2, FolderOpen, LoaderCircle, Settings } from 'lucide-react'
+import { FilePlus2, FolderOpen, LoaderCircle, Rows3, Settings } from 'lucide-react'
 import Image from 'next/image'
 import { useState, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +17,7 @@ import {
   refresh,
   useCommand,
   useImportPages,
+  useImportWebtoonPages,
   usePage,
   usePages,
   useProject,
@@ -51,7 +52,11 @@ export function TitleBar() {
   const selectLayers = useKoharuStore((state) => state.selectLayers)
   const setSettingsOpen = useKoharuStore((state) => state.setSettingsOpen)
   const requestCanvasFit = useKoharuStore((state) => state.requestCanvasFit)
-  const { importPages, importing } = useImportPages()
+  const { importPages, importing: importingPages } = useImportPages()
+  const { importWebtoonPages, importing: importingWebtoon } = useImportWebtoonPages()
+  // Both import paths write the same project commit sequence, so they share one busy state and
+  // neither can be started while the other is running.
+  const importing = importingPages || importingWebtoon
   const { run: exportProject, busy: exporting } = useCommand(
     ['export-project'],
     commands.export,
@@ -105,6 +110,13 @@ export function TitleBar() {
                   <MenubarItem disabled={importing} onClick={() => importPages('folder')}>
                     <FolderOpen />
                     {t('navigator.importFolder')}
+                  </MenubarItem>
+                  <MenubarItem
+                    disabled={importing}
+                    onClick={() => importWebtoonPages('folder', 'auto')}
+                  >
+                    <Rows3 />
+                    {t('navigator.importWebtoon')}
                   </MenubarItem>
                 </MenubarSubContent>
               </MenubarSub>

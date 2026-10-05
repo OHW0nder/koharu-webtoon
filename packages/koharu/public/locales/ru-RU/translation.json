@@ -286,6 +286,7 @@
     "importAction": "Импорт",
     "importFiles": "Файлы…",
     "importFolder": "Папка…",
+    "importWebtoon": "Папка вебтона…",
     "importing": "Импорт страниц…",
     "importingAction": "Импорт…",
     "layerCount": "Слоёв: {{count}}",

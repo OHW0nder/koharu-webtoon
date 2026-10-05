@@ -73,6 +73,7 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             lifecycle::delete_project,
             lifecycle::close_project,
             lifecycle::import,
+            lifecycle::import_webtoon,
             lifecycle::select_page,
             editing::rename_page,
             editing::delete_pages,

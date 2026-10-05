@@ -7,6 +7,7 @@ import {
   FolderOpen,
   LoaderCircle,
   MoreHorizontal,
+  Rows3,
   Search,
   Settings,
   Trash2,
@@ -24,6 +25,7 @@ import {
   queryClient,
   refresh,
   useImportPages,
+  useImportWebtoonPages,
   usePage,
   usePages,
 } from '@/lib/queries'
@@ -74,7 +76,11 @@ export function PageRail() {
   const selectPages = useKoharuStore((state) => state.selectPages)
   const selectLayers = useKoharuStore((state) => state.selectLayers)
   const setSettingsOpen = useKoharuStore((state) => state.setSettingsOpen)
-  const { importPages, importing } = useImportPages()
+  const { importPages, importing: importingPages } = useImportPages()
+  const { importWebtoonPages, importing: importingWebtoon } = useImportWebtoonPages()
+  // Both import paths write the same project commit sequence, so they share one busy state and
+  // neither can be started while the other is running.
+  const importing = importingPages || importingWebtoon
   const anchor = useRef<number | null>(null)
   const selectionRequest = useRef(0)
   const intentPrefetch = useRef<IntentPrefetchState | null>(null)
@@ -273,7 +279,11 @@ export function PageRail() {
               {t('navigator.emptyDescription')}
             </p>
             <div className='mt-3'>
-              <PageImportMenu importing={importing} onImport={importPages} />
+              <PageImportMenu
+                importing={importing}
+                onImport={importPages}
+                onImportWebtoon={() => importWebtoonPages('folder', 'auto')}
+              />
             </div>
           </div>
         ) : visiblePages.length === 0 ? (
@@ -389,9 +399,11 @@ export function PageRail() {
 function PageImportMenu({
   importing,
   onImport,
+  onImportWebtoon,
 }: {
   importing: boolean
   onImport: (source: PageImportSource) => void
+  onImportWebtoon: () => void
 }) {
   const { t } = useTranslation()
   const icon = importing ? (
@@ -435,6 +447,14 @@ function PageImportMenu({
         >
           <FolderOpen />
           {t('navigator.importFolder')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={importing}
+          className='min-h-7 gap-1 px-1.5 py-0.5 text-[11px] [&_svg:not([class*="size-"])]:size-3.5'
+          onClick={onImportWebtoon}
+        >
+          <Rows3 />
+          {t('navigator.importWebtoon')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

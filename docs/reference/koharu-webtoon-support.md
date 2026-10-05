@@ -144,11 +144,17 @@ text 框中心落在任何 bubble 外的比例：letterbox 45.3%，stretch 50.0%
 
 ## 4. 数据模型
 
-切页需要在场景里表达"这一页是某张原图的一段"。新增 `PageSlice` 组件承载 `y_offset` 与 `slice_height`。
+切页需要在场景里表达"这一页是某张原图的一段"。这个记录是 `PageSlice` 组件，承载 `y_offset`、`slice_height` 与源图的 `BlobId`。
 
-溯源信息存 `BlobId` 而非源页 `EntityId`：源页可能被用户删除，存实体 ID 会悬空；存 blob 则与实体生命周期解耦。代价是无法从某页反查同源的兄弟页。
+**它不是 `koharu-scene` 的内置组件**，而是 `koharu-app` 里以 `dev.koharu.webtoon.page.slice` 为 kind 声明的自定义组件。内核对未注册的组件 kind 兜底放行，并保留其 schema 版本、引用与指纹，所以官方版本加载本项目不会失败，切片数据也不会丢失。这样内核相对上游只剩 `Assets` 的一处可见性提升——场景状态结构、组件注册表、关系表与导出列表都与上游逐字一致。扩展的形态约束见 `docs/extending-koharu.md`。
 
-`slice-of` 是跨页关系。现有 `insert_relation` 只校验实体存在性，不校验同页，因此不与 `koharu-scene` 的 page marker 不可嵌套规则冲突。
+溯源信息存 `BlobId` 而非源页 `EntityId`：源页会被用户删除，存实体 ID 会悬空；存 blob 则与实体生命周期解耦。代价是无法从某页反查同源的兄弟页。
+
+源图的字节要进入项目存储、但不需要任何页面显示它。做法是借一个临时载体页挂上资产再立刻删除：内容寻址的 blob 身份可以预先算出，切片的 `blob_refs()` 会把它钉住，因此删页不会让垃圾回收把它带走。**载体页必须先于切片建立**，否则切片组件的 `contains_blob` 校验会认为源图尚不存在。
+
+`slice-of` 跨页关系没有实现。切片刻意锚定 blob 而非实体，所以该关系能回答的"哪一页是源图"在源页被删之后必然失效；做成瞬态关系只多一个需要维护的组件，收益不足。
+
+上游导入命令不参与这件事。`import` 保持原样、把过长图片原封不动地收成一页；切割只发生在并列的 `import_webtoon` 命令里。
 
 ---
 
@@ -197,10 +203,9 @@ XianScan 原本用轻量 OCR 模型建立"禁切文本区"再选切点。Koharu 
 | 无 ground truth | §3.5，无法算 precision / recall |
 | panel 置信度下降 | §3.3，letterbox 默认的已知代价 |
 | 拟声词不参与下游 | 模型可检出 `onomatopoeia`，但区域类型映射未覆盖它，会落入 unknown 被丢弃。这是**有意决策**：不 OCR、不擦除、不翻译。基线显示该类 AP 仅 0.443（对比 text 0.878、bubble 0.909、panel 0.957），是四类中最弱的 |
-| 前端未接线 | `import` 命令已接受可选的 `slicing` 参数，但 UI 没有强制按条漫导入的入口，也没有单页重新切页的操作。命令层参数是 `Option` 而非必填，正是因为 Tauri 逐字段反序列化、不看类型的 `Default`，必填会让所有现有调用失败 |
-| `split_page` 无命令入口 | 场景层能力已就绪（`Edit::split_page`），但没有 Tauri 命令暴露，所以"按条漫切页"这个补救操作无处可接 |
-| 桥接协议未重新生成 | `packages/bridge/src/protocol.ts` 需要链接 `koharu-app` 的生成器。类型检查可用 `DOCS_RS=1 cargo check -p koharu-app` 绕过 GTK 依赖（生成器需要真实链接）。重新生成后 `import` 会变成 `(source, slicing: PageImportSlicing \| null)`，前端 `lib/queries.ts` 的 `useImportPages` 需相应传 `null`，否则 typecheck 失败——**这两步必须一起做** |
-| 章节存储约 2 倍 | 导入时未切原图也作为 patch attachment 存入项目，各 band 的 `PageSlice` 共同钉住它。这是 `koharu-storage` 的 `blobs.persist()` 要求 lease 内每个 blob 已落盘的结果，不是免费的软引用。`slice-of` 关系因此是瞬时的：原页删除后关系消失，band 靠 `PageSlice` + blob 存活并可重新切分 |
+| 只能按条漫导入，不能重新切页 | 条漫在导入期一次切完，没有"对已导入的长图重新切一遍"的入口。这是有意的取舍：源图 blob 仍然保留在项目里，重新切割的算法也还在 `koharu-ml::webtoon`，缺的只是一个按新边界重切的命令 |
+| 章节存储约 2 倍 | 导入时未切原图也作为 patch attachment 存入项目，各切片的 `blob_refs()` 共同钉住它。这是 `koharu-storage` 的 `blobs.persist()` 要求 lease 内每个 blob 已落盘的结果，不是免费的软引用。源图字节因此在项目里多占一份，但没有页面显示它 |
+| 切页入口只有文件夹 | `import_webtoon` 接受与 `import` 相同的 `PageImportSource`，但 UI 只暴露"条漫文件夹"。选中单张长图走普通导入会被原样收成一页，此时需要改用条漫入口 |
 
 ### 6.1 本地验证命令
 

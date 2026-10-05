@@ -107,8 +107,8 @@ impl AssetRole {
 
 #[revisioned(revision = 1)]
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Assets {
-    pub(crate) values: BTreeMap<AssetRole, Asset>,
+pub struct Assets {
+    pub values: BTreeMap<AssetRole, Asset>,
 }
 
 impl Component for Assets {
