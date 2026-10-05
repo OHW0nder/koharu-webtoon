@@ -34,6 +34,12 @@ export const commands = {
 	layers: Layer[],
 	regions: AnalysisRegion[],
 } | null>("get_page").then((v) => (v==null?v:({...v,layers:v.layers.map(i=>i),regions:v.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))}) as typeof v)),
+	/**
+	 *  列出没有任何漫画认领的项目，也就是漫画柜下方的「未分组项目」。
+	 * 
+	 *  认领关系由漫画索引决定，不由内核的项目枚举决定：内核只认项目，章项目在它眼里仍然是
+	 *  普通项目，能不能单独打开取决于有没有被登记成某一章。
+	 */
 	listProjects: () => __TAURI_INVOKE<ProjectSummary[]>("list_projects"),
 	createProject: (name: string) => __TAURI_INVOKE<null>("create_project", { name }),
 	openProject: (name: string) => __TAURI_INVOKE<null>("open_project", { name }),
@@ -57,6 +63,37 @@ export const commands = {
 	listSeries: () => __TAURI_INVOKE<SeriesSummary[]>("list_series"),
 	/**  One series with its chapters, which is what the chapter list needs. */
 	getSeries: (id: string) => __TAURI_INVOKE<Series>("get_series", { id }),
+	/**
+	 *  Reads the series-level translation settings.
+	 * 
+	 *  Split from `get_series` because the settings panel is the only caller that needs them: a
+	 *  chapter list has no reason to drag the glossary file name along with it.
+	 */
+	getSeriesSettings: (id: string) => __TAURI_INVOKE<SeriesSettings>("get_series_settings", { id }),
+	/**
+	 *  Writes the series-level settings back into the index.
+	 * 
+	 *  Only the settings field is replaced. The index is the one file that describes the whole series,
+	 *  so writing back a copy the caller assembled from scratch would silently drop chapters, the
+	 *  cover or the source folder it never meant to touch.
+	 */
+	setSeriesSettings: (id: string, settings: SeriesSettings) => __TAURI_INVOKE<SeriesSettings>("set_series_settings", { id, settings }),
+	/**
+	 *  Reads the glossary stored beside the series index.
+	 * 
+	 *  A missing file is an empty table rather than a failure: `settings.glossary` records the file
+	 *  name, but a glossary nobody ever wrote is the normal state of a freshly imported series, and the
+	 *  editor should open on an empty list rather than on an error it would have to special-case.
+	 */
+	getGlossary: (id: string) => __TAURI_INVOKE<Glossary>("get_glossary", { id }).then((v) => (({...v,entries:v.entries.map(i=>({...i,confidence:i.confidence==null?i.confidence:i.confidence}))}) as typeof v)),
+	/**
+	 *  Saves the glossary and points the index at it.
+	 * 
+	 *  The file is written before the index on purpose. The index only records the file name, so the
+	 *  other order can leave it naming a file that was never written, and the next read would come back
+	 *  empty for a glossary the user just saved.
+	 */
+	setGlossary: (id: string, glossary: Glossary) => __TAURI_INVOKE<Glossary>("set_glossary", { id, glossary: ({...glossary,entries:glossary.entries.map(i=>({...i,confidence:i.confidence==null?i.confidence:i.confidence}))}) }).then((v) => (({...v,entries:v.entries.map(i=>({...i,confidence:i.confidence==null?i.confidence:i.confidence}))}) as typeof v)),
 	/**
 	 *  导入一个文件夹作为一部漫画。
 	 * 
@@ -136,6 +173,19 @@ export type Account = {
 	id: string,
 	email: string | null,
 	plan: string | null,
+};
+
+/**
+ *  条漫首尾的广告带高度，单位为原始源图像素。
+ * 
+ *  两条高度各自锚定在源图的一端，**不锚定在顶端**。每章的总高不同，从顶端起算的位置会随
+ *  章节长度漂移；锚定底端才能让同一个数值在整部作品里通用。
+ */
+export type AdBands = {
+	/**  自源图顶端起算的首条高度。0 表示这一端没有广告。 */
+	head: number,
+	/**  自源图底端起算的尾条高度。0 表示这一端没有广告。 */
+	tail: number,
 };
 
 export type AgentStatus = {
@@ -333,6 +383,52 @@ export type GeometryUpdate = {
 	layer: EntityId,
 	points: Point[] | null,
 };
+
+/**
+ *  术语表。
+ * 
+ *  结构逐字段对齐上游社区实现（见 `docs/series-translation-assets-audit.md` §5），将来上游若
+ *  实现同类功能，迁移是字段对字段的复制而不是语义猜测。只加一个本地扩展字段：备注。
+ */
+export type Glossary = {
+	/**  关闭时整份表不参与注入，条目保留。 */
+	enabled: boolean,
+	source_language: string | null,
+	target_language: string | null,
+	/**  源文本指纹。用于判断这份表是否还对得上当前项目的原文。 */
+	source_fingerprint: string | null,
+	entries: GlossaryEntry[],
+};
+
+/**  一条术语。 */
+export type GlossaryEntry = {
+	id: GlossaryEntryId,
+	/**  原文术语。 */
+	source: string,
+	/**  定稿译文。`None` 表示还没定稿，注入时跳过。 */
+	translation: string | null,
+	kind: GlossaryKind,
+	/**  关闭时保留条目但不参与注入。 */
+	enabled: boolean,
+	/**  适用情形说明，例如「只在战斗场景指武器」。上游没有这个字段。 */
+	note: string,
+	confidence: number | null,
+	occurrence_count: number,
+	examples: string[],
+	source_origin: GlossaryValueOrigin,
+	translation_origin: GlossaryValueOrigin | null,
+	/**  最近一次扫描时是否仍出现在原文里。 */
+	present_in_last_scan: boolean,
+};
+
+/**  术语的稳定标识。 */
+export type GlossaryEntryId = string;
+
+/**  术语的类别。类别只用于界面筛选与排序，不进入提示词。 */
+export type GlossaryKind = "person" | "place" | "organization" | "item" | "ability" | "term" | "other";
+
+/**  这个值是谁写的。人工写的一律不被自动流程覆盖。 */
+export type GlossaryValueOrigin = "detected" | "automatic" | "user" | "imported";
 
 export type GoogleCloudConfig = Record<string, never>;
 
@@ -623,10 +719,25 @@ export type SeriesChapter = {
 /**
  *  漫画级的翻译资料与配置。
  * 
- *  归属漫画而不是章：资料的生命周期跟着整部作品走，而章项目会被删除重建。现在刻意不设
- *  字段，术语表与角色卡是它的第一批成员。
+ *  归属漫画而不是章：资料的生命周期跟着整部作品走，而章项目会被删除重建。
  */
-export type SeriesSettings = Record<string, never>;
+export type SeriesSettings = {
+	/**  条漫首尾的站点广告高度，导入时从源图裁掉。 */
+	ad: AdBands,
+	/**
+	 *  本作特有的翻译风格约定，手写散文。
+	 * 
+	 *  空串表示没有。全局指导仍然保留，排在它之后作为跨作品的个人口味兜底。
+	 */
+	guidance: string,
+	/**
+	 *  术语表文件名，与索引同目录。`None` 表示还没有术语表。
+	 * 
+	 *  存文件名而不是内容：术语表条目多且每条都可能被编辑，放进索引会让改一个词条就要重写
+	 *  整个编排文件。`Some` 但文件不存在是合法状态，读取时当作空表。
+	 */
+	glossary: string | null,
+};
 
 /**  首页漫画柜需要的一条漫画。 */
 export type SeriesSummary = {

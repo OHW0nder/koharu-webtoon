@@ -18,6 +18,7 @@ base64 = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 hayro = { workspace = true }
+icu_normalizer = { workspace = true }
 image = { workspace = true }
 koharu-agent = { workspace = true }
 koharu-desktop = { workspace = true }

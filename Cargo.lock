@@ -4704,6 +4704,7 @@ dependencies = [
  "dirs 7.0.0",
  "futures",
  "hayro",
+ "icu_normalizer",
  "image",
  "koharu-agent",
  "koharu-desktop",

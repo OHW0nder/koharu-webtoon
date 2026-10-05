@@ -24,7 +24,7 @@ use tauri_runtime_cef::CefRuntime;
 
 use super::{
     Error,
-    import::{self, Format, Slicing},
+    import::{self, AdBandSkip, Format, Slicing},
     lifecycle::replace_project,
     output::{ExportFormat, export_snapshot},
     processing::{JobChannel, JobId, JobState, Processing, process},
@@ -54,12 +54,313 @@ pub struct Series {
     pub settings: SeriesSettings,
 }
 
+/// Reads the series-level translation settings.
+///
+/// Split from `get_series` because the settings panel is the only caller that needs them: a
+/// chapter list has no reason to drag the glossary file name along with it.
+#[tracing::instrument(
+    target = "koharu_metrics",
+    name = "series_settings_read",
+    skip_all,
+    fields(origin = "user", series = %id),
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn get_series_settings(
+    id: String,
+    library: State<'_, SeriesLibrary>,
+) -> std::result::Result<SeriesSettings, Error> {
+    let series = library.read(&id)?;
+    Ok(series.settings)
+}
+
+/// Writes the series-level settings back into the index.
+///
+/// Only the settings field is replaced. The index is the one file that describes the whole series,
+/// so writing back a copy the caller assembled from scratch would silently drop chapters, the
+/// cover or the source folder it never meant to touch.
+#[tracing::instrument(
+    target = "koharu_metrics",
+    name = "series_settings_written",
+    skip_all,
+    fields(
+        origin = "user",
+        series = %id,
+        head = settings.ad.head,
+        tail = settings.ad.tail,
+        has_guidance = !settings.guidance.trim().is_empty(),
+    ),
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn set_series_settings(
+    id: String,
+    settings: SeriesSettings,
+    library: State<'_, SeriesLibrary>,
+) -> std::result::Result<SeriesSettings, Error> {
+    let mut series = library.read(&id)?;
+    series.settings = settings;
+    library.write(&series)?;
+    Ok(series.settings)
+}
+
+/// Reads the glossary stored beside the series index.
+///
+/// A missing file is an empty table rather than a failure: `settings.glossary` records the file
+/// name, but a glossary nobody ever wrote is the normal state of a freshly imported series, and the
+/// editor should open on an empty list rather than on an error it would have to special-case.
+#[tracing::instrument(
+    target = "koharu_metrics",
+    name = "glossary_read",
+    skip_all,
+    fields(origin = "user", series = %id),
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn get_glossary(
+    id: String,
+    library: State<'_, SeriesLibrary>,
+) -> std::result::Result<Glossary, Error> {
+    let directory = library.path(&id);
+    if !directory.join(GLOSSARY_FILE).is_file() {
+        return Ok(Glossary::default());
+    }
+    Ok(crate::glossary::load(&directory)
+        .with_context(|| format!("failed to read the glossary of series {id:?}"))?)
+}
+
+/// Saves the glossary and points the index at it.
+///
+/// The file is written before the index on purpose. The index only records the file name, so the
+/// other order can leave it naming a file that was never written, and the next read would come back
+/// empty for a glossary the user just saved.
+#[tracing::instrument(
+    target = "koharu_metrics",
+    name = "glossary_written",
+    skip_all,
+    fields(origin = "user", series = %id, entries = glossary.entries.len()),
+)]
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn set_glossary(
+    id: String,
+    glossary: Glossary,
+    library: State<'_, SeriesLibrary>,
+) -> std::result::Result<Glossary, Error> {
+    validate_glossary(&glossary)
+        .with_context(|| format!("the glossary of series {id:?} cannot be saved"))?;
+    let directory = library.path(&id);
+    crate::glossary::save(&directory, &glossary)
+        .with_context(|| format!("failed to write the glossary of series {id:?}"))?;
+
+    let mut series = library.read(&id)?;
+    series.settings.glossary = Some(GLOSSARY_FILE.to_owned());
+    library.write(&series)?;
+    Ok(glossary)
+}
+
 /// 漫画级的翻译资料与配置。
 ///
-/// 归属漫画而不是章：资料的生命周期跟着整部作品走，而章项目会被删除重建。现在刻意不设
-/// 字段，术语表与角色卡是它的第一批成员。
+/// 归属漫画而不是章：资料的生命周期跟着整部作品走，而章项目会被删除重建。
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-pub struct SeriesSettings {}
+pub struct SeriesSettings {
+    /// 条漫首尾的站点广告高度，导入时从源图裁掉。
+    pub ad: AdBands,
+    /// 本作特有的翻译风格约定，手写散文。
+    ///
+    /// 空串表示没有。全局指导仍然保留，排在它之后作为跨作品的个人口味兜底。
+    pub guidance: String,
+    /// 术语表文件名，与索引同目录。`None` 表示还没有术语表。
+    ///
+    /// 存文件名而不是内容：术语表条目多且每条都可能被编辑，放进索引会让改一个词条就要重写
+    /// 整个编排文件。`Some` 但文件不存在是合法状态，读取时当作空表。
+    pub glossary: Option<String>,
+}
+
+/// 条漫首尾的广告带高度，单位为原始源图像素。
+///
+/// 两条高度各自锚定在源图的一端，**不锚定在顶端**。每章的总高不同，从顶端起算的位置会随
+/// 章节长度漂移；锚定底端才能让同一个数值在整部作品里通用。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct AdBands {
+    /// 自源图顶端起算的首条高度。0 表示这一端没有广告。
+    pub head: u32,
+    /// 自源图底端起算的尾条高度。0 表示这一端没有广告。
+    pub tail: u32,
+}
+
+impl AdBands {
+    /// 这次导入是否需要裁剪。
+    pub(crate) fn is_empty(self) -> bool {
+        self.head == 0 && self.tail == 0
+    }
+}
+
+/// 术语表。
+///
+/// 结构逐字段对齐上游社区实现（见 `docs/series-translation-assets-audit.md` §5），将来上游若
+/// 实现同类功能，迁移是字段对字段的复制而不是语义猜测。只加一个本地扩展字段：备注。
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+pub struct Glossary {
+    /// 关闭时整份表不参与注入，条目保留。
+    pub enabled: bool,
+    pub source_language: Option<String>,
+    pub target_language: Option<String>,
+    /// 源文本指纹。用于判断这份表是否还对得上当前项目的原文。
+    pub source_fingerprint: Option<String>,
+    pub entries: Vec<GlossaryEntry>,
+}
+
+impl Glossary {
+    /// 归一化之后重复的「原文 + 类别」组合。导入与人工编辑都要过这一关。
+    pub fn duplicate_keys(&self) -> Vec<(String, GlossaryKind)> {
+        let mut seen = BTreeSet::new();
+        let mut duplicates = Vec::new();
+        for entry in &self.entries {
+            let key = (normalize_glossary_source(&entry.source), entry.kind);
+            if !seen.insert(key.clone()) {
+                duplicates.push(key);
+            }
+        }
+        duplicates
+    }
+}
+
+/// 一条术语。
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct GlossaryEntry {
+    pub id: GlossaryEntryId,
+    /// 原文术语。
+    pub source: String,
+    /// 定稿译文。`None` 表示还没定稿，注入时跳过。
+    pub translation: Option<String>,
+    pub kind: GlossaryKind,
+    /// 关闭时保留条目但不参与注入。
+    pub enabled: bool,
+    /// 适用情形说明，例如「只在战斗场景指武器」。上游没有这个字段。
+    pub note: String,
+    pub confidence: Option<f32>,
+    pub occurrence_count: u32,
+    pub examples: Vec<String>,
+    pub source_origin: GlossaryValueOrigin,
+    pub translation_origin: Option<GlossaryValueOrigin>,
+    /// 最近一次扫描时是否仍出现在原文里。
+    pub present_in_last_scan: bool,
+}
+
+impl GlossaryEntry {
+    /// 是否参与注入：启用、有译文、译文非空。
+    pub fn is_injectable(&self) -> bool {
+        self.enabled
+            && self.translation.as_ref().is_some_and(|value| !value.trim().is_empty())
+    }
+}
+
+/// 术语的稳定标识。
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize, Type)]
+#[serde(transparent)]
+#[specta(transparent)]
+pub struct GlossaryEntryId(#[specta(type = String)] uuid::Uuid);
+
+impl GlossaryEntryId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(uuid::Uuid::now_v7())
+    }
+
+    #[must_use]
+    pub const fn as_uuid(self) -> uuid::Uuid {
+        self.0
+    }
+}
+
+impl Default for GlossaryEntryId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for GlossaryEntryId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl std::str::FromStr for GlossaryEntryId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        value.parse().map(Self)
+    }
+}
+
+/// 术语的类别。类别只用于界面筛选与排序，不进入提示词。
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum GlossaryKind {
+    Person,
+    Place,
+    Organization,
+    Item,
+    Ability,
+    Term,
+    Other,
+}
+
+/// 这个值是谁写的。人工写的一律不被自动流程覆盖。
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum GlossaryValueOrigin {
+    Detected,
+    Automatic,
+    User,
+    Imported,
+}
+
+/// 术语原文的归一化形式，用于去重与匹配。
+///
+/// NFKC 归一化后折叠空白并转小写。NFKC 是必要的：漫画文本里全角与半角拉丁混用，不归一化就会
+/// 把同一个词当成两个。
+#[must_use]
+pub fn normalize_glossary_source(source: &str) -> String {
+    let normalized = icu_normalizer::ComposingNormalizerBorrowed::new_nfkc()
+        .normalize_iter(source.chars())
+        .collect::<String>();
+    normalized
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// 校验一份术语表是否可以落盘。
+pub fn validate_glossary(glossary: &Glossary) -> Result<()> {
+    let mut ids = BTreeSet::new();
+    for entry in &glossary.entries {
+        if !ids.insert(entry.id) {
+            bail!("glossary entry ids contain duplicates");
+        }
+        if entry.source.trim().is_empty() {
+            bail!("a glossary entry has an empty source");
+        }
+        if let Some(confidence) = entry.confidence
+            && !(0.0..=1.0).contains(&confidence)
+        {
+            bail!("glossary confidence must be within 0..=1");
+        }
+    }
+    let duplicates = glossary.duplicate_keys();
+    if !duplicates.is_empty() {
+        bail!(
+            "glossary has {} duplicated source and kind combinations",
+            duplicates.len()
+        );
+    }
+    Ok(())
+}
+
+/// 术语表文件名，与索引同目录。
+pub(crate) const GLOSSARY_FILE: &str = "glossary.json";
 
 /// 漫画里的一章。
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -406,6 +707,33 @@ pub(crate) fn scan_series_source(
         .collect())
 }
 
+/// 把广告带的执行结果写成一条日志。
+///
+/// 跳过不是错误，但用户需要知道它发生了：广告高度设得比某些源图允许的更大时，那几张图会整张
+/// 进项目、带着广告，等于这一批的设置对它们无效。静默地导入会让用户以为设置生效了。
+fn report_ad_bands(series: &str, report: &import::AdBandReport) {
+    for skipped in report.skipped() {
+        let reason = match skipped.reason {
+            AdBandSkip::Covered => "the bands cover the whole image",
+            AdBandSkip::TooShort => "what is left is shorter than one page",
+            AdBandSkip::NotSliceable => "what is left is already one page",
+        };
+        tracing::warn!(
+            series,
+            page = %skipped.name,
+            reason,
+            "the series' ad bands were not applied to this image"
+        );
+    }
+    if report.trimmed() > 0 {
+        tracing::info!(
+            series,
+            trimmed = report.trimmed(),
+            "cut the ad bands off before slicing"
+        );
+    }
+}
+
 /// Imports one chapter of an existing series from its source folder.
 #[tauri::command]
 #[specta::specta]
@@ -438,14 +766,18 @@ pub(crate) async fn import_series_chapter(
     if files.is_empty() {
         return Err(anyhow::anyhow!("{name} holds no importable pages").into());
     }
-    let imported = tokio_rayon::spawn(move || match kind {
-        ChapterKind::Manga => import::import(files),
-        ChapterKind::Webtoon => import::import_webtoon(files, Slicing::Auto),
+    let ad = series.settings.ad;
+    // 两个分支都归到「页面 + 广告带报告」，让调用方不必关心这一章是哪种源形态。
+    let (pages, ad_bands) = tokio_rayon::spawn(move || match kind {
+        ChapterKind::Manga => import::import(files).map(|pages| (pages, import::AdBandReport::default())),
+        ChapterKind::Webtoon => import::import_webtoon(files, Slicing::Auto, ad)
+            .map(|webtoon| (webtoon.imported, webtoon.ad_bands)),
     })
     .await?;
     let project_name = format!("{stem} Ch{seq}");
     let mut project = projects.create(&project_name).await?;
-    import::apply(&mut project, imported).await?;
+    report_ad_bands(&series.id, &ad_bands);
+    import::apply(&mut project, pages).await?;
 
     series.chapters.push(SeriesChapter {
         seq,
@@ -501,13 +833,19 @@ pub(crate) async fn import_series(
         if files.is_empty() {
             continue;
         }
-        let imported = tokio_rayon::spawn(move || match kind {
-            ChapterKind::Manga => import::import(files),
-            ChapterKind::Webtoon => import::import_webtoon(files, Slicing::Auto),
+        let ad = planned.settings.ad;
+        // 两个分支都归到「页面 + 广告带报告」，让调用方不必关心这一章是哪种源形态。
+        let (pages, ad_bands) = tokio_rayon::spawn(move || match kind {
+            ChapterKind::Manga => {
+                import::import(files).map(|pages| (pages, import::AdBandReport::default()))
+            }
+            ChapterKind::Webtoon => import::import_webtoon(files, Slicing::Auto, ad)
+                .map(|webtoon| (webtoon.imported, webtoon.ad_bands)),
         })
         .await?;
         let mut project = projects.create(&chapter.project).await?;
-        import::apply(&mut project, imported).await?;
+        report_ad_bands(&planned.id, &ad_bands);
+        import::apply(&mut project, pages).await?;
         tracing::info!(series = %planned.id, chapter = %chapter.project, "imported a chapter");
     }
 

@@ -20,7 +20,7 @@ use super::{
         CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary, ProjectSummary,
     },
     reject_import_while_processing,
-    series::SeriesLibrary,
+    series::{AdBands, SeriesLibrary},
 };
 use crate::webtoon;
 
@@ -478,8 +478,13 @@ pub(crate) async fn import_webtoon(
     let Some(files) = select_import_paths(source, &window).await? else {
         return Ok(());
     };
-    let imported = tokio_rayon::spawn(move || import::import_webtoon(files, slicing.into())).await?;
+    // 这条命令不属于任何漫画，因此没有广告带设置可用——它不裁剪。条漫的正常入口是章节管理页，
+    // 那里会从漫画设置里读广告带。
+    let imported =
+        tokio_rayon::spawn(move || import::import_webtoon(files, slicing.into(), AdBands::default()))
+            .await?;
     let page_count: usize = imported
+        .imported
         .iter()
         .map(|entry| match entry {
             Imported::Page(_) => 1,
@@ -490,7 +495,7 @@ pub(crate) async fn import_webtoon(
     let (commit, page) = {
         let mut project = project.project.lock().await;
         let project = project.as_mut().context("no project is open")?;
-        let commit = import::apply(project, imported).await?;
+        let commit = import::apply(project, imported.imported).await?;
         project.record(vec![commit.revision]);
         project.reconcile_page();
         let page = project.active_page();

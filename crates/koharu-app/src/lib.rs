@@ -2,6 +2,7 @@
 
 mod app;
 mod commands;
+pub(crate) mod glossary;
 pub(crate) mod webtoon;
 
 pub use app::run;
