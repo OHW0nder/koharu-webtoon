@@ -464,6 +464,50 @@
       "title": "Composição tipográfica"
     }
   },
+  "series": {
+    "backToShelf": "Voltar à estante",
+    "chapterCount": "{{count}} capítulos",
+    "empty": "Esta série ainda não tem capítulos",
+    "kind": {
+      "manga": "Páginas",
+      "webtoon": "Webtoon"
+    },
+    "loading": "Carregando…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "Concluído",
+      "pending": "Pendente",
+      "ready": "Pronto"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "Nome do projeto",
+    "description": "Projetos de tradução por série e capítulo",
+    "emptyDescription": "Importe uma pasta: com subpastas é uma série, plana é um volume único",
+    "emptyTitle": "Nenhuma série ainda",
+    "import": "Importar",
+    "importHint": "Importe este capítulo pela estante",
+    "importManga": "Pasta de páginas…",
+    "importing": "Importando…",
+    "importWebtoon": "Pasta de webtoon…",
+    "newBlank": "Novo",
+    "oneshot": "Único",
+    "progress": "{{done}} / {{total}} capítulos",
+    "title": "Estante",
+    "ungrouped": "Projetos sem grupo",
+    "ungroupedEmpty": "Nenhum projeto fora de uma série"
+  },
   "start": {
     "create": "Criar",
     "deleteAction": "Excluir projeto",

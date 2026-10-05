@@ -8,8 +8,14 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use image::{DynamicImage, ImageFormat, ImageReader};
 use koharu_ml::webtoon::{SliceParams, plan_slices, row_profile};
+use koharu_scene::{
+    AssetInput, AssetMetadata, AssetRole, At, Commit, PageDraft,
+};
 use rayon::prelude::*;
 use strum::{EnumIter, EnumMessage, EnumString};
+use walkdir::WalkDir;
+
+use super::project::Project;
 
 mod pdf;
 mod rar;
@@ -132,8 +138,8 @@ fn decode(path: &Path, source: EncodedPage) -> Result<Page> {
 /// A tall image becomes exactly one page here no matter how tall it is. Dividing long strips is
 /// the webtoon importer's job, and it is a separate entry point so that this path stays the
 /// upstream command's behaviour.
-pub(super) fn import(paths: Vec<PathBuf>) -> Result<Vec<Page>> {
-    read(paths)
+pub(super) fn import(paths: Vec<PathBuf>) -> Result<Vec<Imported>> {
+    Ok(read(paths)?.into_iter().map(Imported::Page).collect())
 }
 
 /// Reads every supported page source and divides the tall ones into pages.
@@ -142,6 +148,103 @@ pub(super) fn import(paths: Vec<PathBuf>) -> Result<Vec<Page>> {
 /// second cutting path: an ordinary page still produces exactly one page.
 pub(super) fn import_webtoon(paths: Vec<PathBuf>, slicing: Slicing) -> Result<Vec<Imported>> {
     Ok(cut(read(paths)?, slicing))
+}
+
+/// Collects every importable file under a directory, one level of recursion deep.
+///
+/// The scan is recursive but never follows symlinks, and an entry that cannot be read is skipped
+/// rather than failing the whole selection, so one unreadable file never costs the user the rest
+/// of a chapter. Unsupported files are dropped silently because a chapter directory usually also
+/// holds artwork, notes and archives that are not pages.
+pub(super) fn collect_importable(directory: &Path) -> Result<Vec<PathBuf>> {
+    Ok(WalkDir::new(directory)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_type().is_file() => Some(entry.into_path()),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(%error, "could not inspect an import directory entry");
+                None
+            }
+        })
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.parse::<Format>().is_ok())
+        })
+        .collect())
+}
+
+/// Writes an import result into a project and commits it.
+///
+/// The three import paths share this: a plain import, a webtoon import, and the series layer
+/// importing a whole shelf. A strip becomes pages through the extension layer's custom component,
+/// so this only has to understand the one intermediate shape.
+pub(super) async fn apply(project: &mut Project, imported: Vec<Imported>) -> Result<Commit> {
+    let role = AssetRole::new("source")?;
+    let patch = project.snapshot().patch(|edit| {
+        for entry in imported {
+            match entry {
+                Imported::Page(page) => {
+                    let id = edit.add_page(
+                        PageDraft::new(
+                            page.name,
+                            f64::from(page.width),
+                            f64::from(page.height),
+                        ),
+                        At::End,
+                    )?;
+                    edit.set_asset(
+                        id,
+                        &role,
+                        AssetInput::new(
+                            page.bytes,
+                            page.format.to_mime_type(),
+                            AssetMetadata {
+                                width: Some(page.width),
+                                height: Some(page.height),
+                                attributes: Default::default(),
+                            },
+                        ),
+                    )?;
+                }
+                Imported::Strip {
+                    source,
+                    format,
+                    width,
+                    height,
+                    bands,
+                } => {
+                    crate::webtoon::add_strip(
+                        edit,
+                        crate::webtoon::StripInput {
+                            bytes: source,
+                            width: f64::from(width),
+                            height: f64::from(height),
+                            media_type: format.to_mime_type().to_owned(),
+                            bands: bands
+                                .into_iter()
+                                .map(|band| {
+                                    let page = band.page;
+                                    crate::webtoon::BandInput {
+                                        label: page.name,
+                                        y_offset: f64::from(band.y_offset),
+                                        height: f64::from(page.height),
+                                        bytes: page.bytes,
+                                        media_type: page.format.to_mime_type().to_owned(),
+                                    }
+                                })
+                                .collect(),
+                        },
+                        At::End,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(project.session.commit(patch).await?)
 }
 
 /// Reads and sorts every supported page source without deciding how tall images are divided.
@@ -382,7 +485,13 @@ mod tests {
         // The upstream import leaves every image whole, however tall it is: dividing strips is the
         // webtoon importer's job, so the upstream command's behaviour is unchanged.
         let plain = import(paths.clone()).expect("import fixtures");
-        let mut heights = plain.iter().map(|page| page.height).collect::<Vec<_>>();
+        let mut heights = plain
+            .iter()
+            .map(|entry| match entry {
+                Imported::Page(page) => page.height,
+                Imported::Strip { height, .. } => *height,
+            })
+            .collect::<Vec<_>>();
         heights.sort_unstable();
         assert_eq!(heights, vec![1600, 6000]);
 

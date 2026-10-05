@@ -464,6 +464,50 @@
       "title": "Composición tipográfica"
     }
   },
+  "series": {
+    "backToShelf": "Volver a la estantería",
+    "chapterCount": "{{count}} capítulos",
+    "empty": "Esta serie todavía no tiene capítulos",
+    "kind": {
+      "manga": "Páginas",
+      "webtoon": "Webtoon"
+    },
+    "loading": "Cargando…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "Hecho",
+      "pending": "Pendiente",
+      "ready": "Listo"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "Nombre del proyecto",
+    "description": "Proyectos de traducción por serie y capítulo",
+    "emptyDescription": "Importa una carpeta: con subcarpetas es una serie, plana es un volumen suelto",
+    "emptyTitle": "Todavía no hay series",
+    "import": "Importar",
+    "importHint": "Importa este capítulo desde la estantería",
+    "importManga": "Carpeta de páginas…",
+    "importing": "Importando…",
+    "importWebtoon": "Carpeta de webtoon…",
+    "newBlank": "Nuevo",
+    "oneshot": "Suelto",
+    "progress": "{{done}} / {{total}} capítulos",
+    "title": "Estantería",
+    "ungrouped": "Proyectos sin grupo",
+    "ungroupedEmpty": "No hay proyectos fuera de una serie"
+  },
   "start": {
     "create": "Crear",
     "deleteAction": "Eliminar proyecto",

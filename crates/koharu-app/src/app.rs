@@ -12,6 +12,7 @@ use crate::commands::{
     },
     processing::{JobChannel, Processing},
     project::{CurrentProject, ProjectLibrary},
+    series::SeriesLibrary,
 };
 
 #[tracing::instrument(
@@ -126,7 +127,9 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
             application.manage(CurrentProject {
                 project: Mutex::new(None),
             });
-            application.manage(ProjectLibrary::new()?);
+            let projects = ProjectLibrary::new()?;
+            application.manage(projects.clone());
+            application.manage(SeriesLibrary::new(&projects));
             application.manage(Processing::default());
             application.manage(CanvasChannel::default());
             application.manage(JobChannel::default());

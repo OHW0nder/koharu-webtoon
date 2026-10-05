@@ -464,6 +464,50 @@
       "title": "組版"
     }
   },
+  "series": {
+    "backToShelf": "本棚に戻る",
+    "chapterCount": "{{count}} 章",
+    "empty": "この作品にはまだ章がありません",
+    "kind": {
+      "manga": "ページ",
+      "webtoon": "ウェブトゥーン"
+    },
+    "loading": "読み込み中…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "完了",
+      "pending": "未取込",
+      "ready": "準備完了"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "空のプロジェクト名",
+    "description": "作品と章で翻訳プロジェクトを管理します",
+    "emptyDescription": "フォルダーを読み込んでください。サブフォルダーがある場合は連続作品、ない場合は単行本です",
+    "emptyTitle": "まだ作品がありません",
+    "import": "読み込む",
+    "importHint": "本棚からこの章を読み込みます",
+    "importManga": "ページフォルダー…",
+    "importing": "読み込み中…",
+    "importWebtoon": "ウェブトゥーンフォルダー…",
+    "newBlank": "新規",
+    "oneshot": "単行本",
+    "progress": "{{done}} / {{total}} 章",
+    "title": "本棚",
+    "ungrouped": "未分類のプロジェクト",
+    "ungroupedEmpty": "作品に属さないプロジェクトはありません"
+  },
   "start": {
     "create": "作成",
     "deleteAction": "プロジェクトを削除",

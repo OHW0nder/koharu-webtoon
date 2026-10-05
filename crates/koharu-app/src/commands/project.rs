@@ -1,4 +1,8 @@
-use std::{collections::HashSet, io::Cursor, path::PathBuf};
+use std::{
+    collections::HashSet,
+    io::Cursor,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use image::{DynamicImage, ImageFormat, RgbaImage};
@@ -248,6 +252,13 @@ impl ProjectLibrary {
     fn resolve(&self, name: &str) -> Result<(String, PathBuf)> {
         let name = validate_project_name(name)?;
         Ok((name.clone(), self.root.join(format!("{name}.khrproj"))))
+    }
+
+    /// The directory every project lives in. Series directories sit beside those projects, so the
+    /// series layer needs the root rather than re-deriving it from the environment: if the root
+    /// ever moves, one place decides.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
     }
 }
 

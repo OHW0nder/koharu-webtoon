@@ -464,6 +464,50 @@
       "title": "排版"
     }
   },
+  "series": {
+    "backToShelf": "返回漫畫櫃",
+    "chapterCount": "{{count}} 章",
+    "empty": "這部漫畫還沒有章節",
+    "kind": {
+      "manga": "頁漫",
+      "webtoon": "條漫"
+    },
+    "loading": "載入中…",
+    "export": "匯出",
+    "fileCount": "{{count}} 個檔案",
+    "importChapter": "匯入新章",
+    "noCandidates": "來源目錄裡沒有新章節",
+    "pipeline": {
+      "full": "完整流程",
+      "throughOcr": "偵測、OCR、翻譯",
+      "translateOnly": "僅翻譯"
+    },
+    "selectAll": "全選",
+    "selectChapter": "選擇 {{name}}",
+    "selectedCount": "已選 {{count}} 章",
+    "status": {
+      "done": "已完成",
+      "pending": "待匯入",
+      "ready": "就緒"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "空白專案名稱",
+    "description": "按漫畫與章節管理翻譯專案",
+    "emptyDescription": "匯入一個資料夾開始：含子目錄就是連載，扁平目錄就是單行本",
+    "emptyTitle": "還沒有漫畫",
+    "import": "匯入漫畫",
+    "importHint": "在漫畫櫃裡匯入這一章",
+    "importManga": "頁漫資料夾…",
+    "importing": "正在匯入…",
+    "importWebtoon": "條漫資料夾…",
+    "newBlank": "新增",
+    "oneshot": "單行本",
+    "progress": "{{done}} / {{total}} 章",
+    "title": "漫畫櫃",
+    "ungrouped": "未分組專案",
+    "ungroupedEmpty": "沒有未歸屬任何漫畫的專案"
+  },
   "start": {
     "create": "建立",
     "deleteAction": "刪除專案",

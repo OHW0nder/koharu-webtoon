@@ -464,6 +464,50 @@
       "title": "Dizgi"
     }
   },
+  "series": {
+    "backToShelf": "Raf'a dön",
+    "chapterCount": "{{count}} bölüm",
+    "empty": "Bu seride henüz bölüm yok",
+    "kind": {
+      "manga": "Sayfalar",
+      "webtoon": "Webtoon"
+    },
+    "loading": "Yükleniyor…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "Tamamlandı",
+      "pending": "Beklemede",
+      "ready": "Hazır"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "Proje adı",
+    "description": "Seri ve bölüm bazında çeviri projeleri",
+    "emptyDescription": "Bir klasör içe aktarın: alt klasörler varsa seri, yoksa tek cilt",
+    "emptyTitle": "Henüz seri yok",
+    "import": "İçe aktar",
+    "importHint": "Bu bölümü raf'dan içe aktarın",
+    "importManga": "Sayfa klasörü…",
+    "importing": "İçe aktarılıyor…",
+    "importWebtoon": "Webtoon klasörü…",
+    "newBlank": "Yeni",
+    "oneshot": "Tek cilt",
+    "progress": "{{done}} / {{total}} bölüm",
+    "title": "Raf",
+    "ungrouped": "Grupsuz projeler",
+    "ungroupedEmpty": "Seriye bağlı olmayan proje yok"
+  },
   "start": {
     "create": "Oluştur",
     "deleteAction": "Projeyi sil",

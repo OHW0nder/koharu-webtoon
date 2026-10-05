@@ -53,6 +53,46 @@ export const commands = {
 "auto" | 
 /**  切所有高于一页的图片，用于长宽比没触到自动门限的条漫。 */
 "forced" | null) => __TAURI_INVOKE<null>("import_webtoon", { source, slicing }),
+	/**  漫画柜里的全部漫画。 */
+	listSeries: () => __TAURI_INVOKE<SeriesSummary[]>("list_series"),
+	/**  One series with its chapters, which is what the chapter list needs. */
+	getSeries: (id: string) => __TAURI_INVOKE<Series>("get_series", { id }),
+	/**
+	 *  导入一个文件夹作为一部漫画。
+	 * 
+	 *  有子目录就是连载，每个子目录一章；没有就是单行本，目录本身是一章，章名跟随文件夹名。
+	 *  两种形态在界面上共用同一套结构，单行本只是永远只有一章，所以界面不必为它开特例分支。
+	 * 
+	 *  每一章都建立成一个独立项目，因此导入多章和导入一章走的是同一条提交路径，也同样受"处理
+	 *  任务运行中不可导入"的约束。索引先落盘再建项目：中途失败时已登记的章还在，重试不会留下
+	 *  一部没有记录的漫画。
+	 */
+	importSeries: (kind: ChapterKind) => __TAURI_INVOKE<Series>("import_series", { kind }),
+	/**
+	 *  Lists the chapter directories under the series' source folder that are not registered yet.
+	 * 
+	 *  Discovery is separate from import on purpose: which kind a chapter is has to be chosen per
+	 *  chapter, and a wrong cut is expensive to undo.
+	 */
+	scanSeriesSource: (id: string) => __TAURI_INVOKE<CandidateChapter[]>("scan_series_source", { id }),
+	/**  Imports one chapter of an existing series from its source folder. */
+	importSeriesChapter: (id: string, name: string, kind: ChapterKind) => __TAURI_INVOKE<Series>("import_series_chapter", { id, name, kind }),
+	/**
+	 *  Runs a processing job over the given chapters, one after another.
+	 * 
+	 *  The kernel allows exactly one project and one job at a time, so the batch is a serial loop:
+	 *  open a chapter, run the whole project scope, wait for the job, move on. Every chapter commits on
+	 *  its own, so an interrupted batch resumes by simply running the chapters that are still pending.
+	 */
+	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<null>("process_series_chapters", { id, projects, operation }),
+	/**
+	 *  Exports the given chapters side by side under one chosen folder.
+	 * 
+	 *  Like processing, this is a serial loop over projects, because only one project can be open at
+	 *  a time. Each chapter lands in its own archive or sub-folder named after the chapter, so a whole
+	 *  volume exports into a single directory the user picked once.
+	 */
+	exportSeriesChapters: (id: string, projects: string[], format: ExportFormat) => __TAURI_INVOKE<null>("export_series_chapters", { id, projects, format }),
 	selectPage: (page: EntityId) => __TAURI_INVOKE<PageSelection>("select_page", { page }).then((v) => (({...v,page:({...v.page,layers:v.page.layers.map(i=>i),regions:v.page.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))})}) as typeof v)),
 	renamePage: (page: EntityId, label: string) => __TAURI_INVOKE<null>("rename_page", { page, label }),
 	deletePages: (pages: EntityId[]) => __TAURI_INVOKE<null>("delete_pages", { pages }),
@@ -122,6 +162,18 @@ export type Bounds = {
 
 export type CaiyunConfig = Record<string, never>;
 
+/**  A chapter directory the downloader produced that the series has not claimed yet. */
+export type CandidateChapter = {
+	name: string,
+	/**  The number this chapter would take. */
+	seq: number,
+	/**
+	 *  How many importable files the directory holds. One long image reads very differently from
+	 *  a page folder, so this is what the user decides the chapter kind on.
+	 */
+	files: number,
+};
+
 export type CanvasBytes = number[];
 
 export type CanvasGeneration = number;
@@ -138,6 +190,23 @@ export type CanvasState = {
 	size: [number, number],
 	element_frames: TransformFrame[],
 };
+
+/**
+ *  一章的源形态。导入时由用户选定，不靠自动判定：页漫里存在高幅面单页，条漫的形态也可能
+ *  与之接近，判错就是整章被切碎或完全没切。
+ */
+export type ChapterKind = 
+/**  页漫：多张普通页，每张一页，不切。 */
+"manga" | 
+/**  条漫：一张纵向长图，按可读高度切页。 */
+"webtoon";
+
+/**  一章的编排状态。 */
+export type ChapterStatus = 
+/**  已在索引中登记，章项目尚未建立。 */
+"pending" | 
+/**  章项目已建立，可以进入处理流程。 */
+"ready" | "done";
 
 export type ClaudeConfig = Record<string, never>;
 
@@ -516,6 +585,59 @@ export type Scope = { scope: "project" } | { scope: "pages"; value: EntityId[] }
 	page: EntityId,
 	bounds: Bounds,
 } } | { scope: "entities"; value: EntityId[] };
+
+/**  一部漫画。 */
+export type Series = {
+	/**
+	 *  目录名，同时是这部漫画的标识。
+	 * 
+	 *  它由所在位置决定，所以读取时以目录名为准覆盖文件里的值；写进文件只是为了在目录被
+	 *  改名之后还能看出原委。
+	 */
+	id: string,
+	title: string,
+	/**  连载为 `true`，单行为 `false`。只影响界面呈现，不改变任何处理逻辑。 */
+	serial: boolean,
+	/**  封面文件名。`None` 表示用户没有指定，界面渲染占位图。 */
+	cover: string | null,
+	/**  下载器的输出目录；扫描新章时用它找出还没登记的目录。 */
+	source_root: string | null,
+	chapters: SeriesChapter[],
+	settings: SeriesSettings,
+};
+
+/**  漫画里的一章。 */
+export type SeriesChapter = {
+	seq: number,
+	title: string,
+	/**  章项目名，对应 `<root>/<project>.khrproj`。 */
+	project: string,
+	/**  相对 `source_root` 的源目录名；`None` 表示这一章就是 `source_root` 本身，即单行本。 */
+	source: string | null,
+	/**  这一章的源形态，决定导入时是否切页。 */
+	kind: ChapterKind,
+	/**  编排状态，与章项目内部的处理状态分开。 */
+	status: ChapterStatus,
+};
+
+/**
+ *  漫画级的翻译资料与配置。
+ * 
+ *  归属漫画而不是章：资料的生命周期跟着整部作品走，而章项目会被删除重建。现在刻意不设
+ *  字段，术语表与角色卡是它的第一批成员。
+ */
+export type SeriesSettings = Record<string, never>;
+
+/**  首页漫画柜需要的一条漫画。 */
+export type SeriesSummary = {
+	id: string,
+	title: string,
+	serial: boolean,
+	/**  封面文件名，`None` 表示用占位图。 */
+	cover: string | null,
+	chapters: number,
+	done: number,
+};
 
 export type SourceText = {
 	text: string,

@@ -464,6 +464,50 @@
       "title": "Вёрстка"
     }
   },
+  "series": {
+    "backToShelf": "Назад к полке",
+    "chapterCount": "{{count}} глав",
+    "empty": "В этой серии пока нет глав",
+    "kind": {
+      "manga": "Страницы",
+      "webtoon": "Вебтун"
+    },
+    "loading": "Загрузка…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "Готово",
+      "pending": "Ожидает",
+      "ready": "Готово к работе"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "Имя проекта",
+    "description": "Проекты перевода по сериям и главам",
+    "emptyDescription": "Импортируйте папку: с подпапками это серия, без них — однотомник",
+    "emptyTitle": "Серий пока нет",
+    "import": "Импорт",
+    "importHint": "Импортируйте эту главу с полки",
+    "importManga": "Папка страниц…",
+    "importing": "Импорт…",
+    "importWebtoon": "Папка вебтона…",
+    "newBlank": "Создать",
+    "oneshot": "Однотомник",
+    "progress": "{{done}} / {{total}} глав",
+    "title": "Полка",
+    "ungrouped": "Проекты без серии",
+    "ungroupedEmpty": "Нет проектов вне серий"
+  },
   "start": {
     "create": "Создать",
     "deleteAction": "Удалить проект",

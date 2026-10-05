@@ -464,6 +464,50 @@
       "title": "조판"
     }
   },
+  "series": {
+    "backToShelf": "책장으로 돌아가기",
+    "chapterCount": "{{count}} 화",
+    "empty": "이 작품에는 아직 화가 없습니다",
+    "kind": {
+      "manga": "페이지",
+      "webtoon": "웹툰"
+    },
+    "loading": "불러오는 중…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "완료",
+      "pending": "대기",
+      "ready": "준비됨"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "빈 프로젝트 이름",
+    "description": "작품과 화별로 번역 프로젝트를 관리합니다",
+    "emptyDescription": "폴더를 가져오세요: 하위 폴더가 있으면 연작, 평면이면 단행본입니다",
+    "emptyTitle": "아직 작품이 없습니다",
+    "import": "가져오기",
+    "importHint": "책장에서 이 화를 가져오세요",
+    "importManga": "페이지 폴더…",
+    "importing": "가져오는 중…",
+    "importWebtoon": "웹툰 폴더…",
+    "newBlank": "새로 만들기",
+    "oneshot": "단행본",
+    "progress": "{{done}} / {{total}} 화",
+    "title": "책장",
+    "ungrouped": "미분류 프로젝트",
+    "ungroupedEmpty": "작품에 속하지 않은 프로젝트가 없습니다"
+  },
   "start": {
     "create": "만들기",
     "deleteAction": "프로젝트 삭제",

@@ -1,27 +1,26 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use image::ImageFormat;
 use koharu_desktop::{CanvasState, Desktop};
-use koharu_scene::{AssetInput, AssetMetadata, AssetRole, At, PageDraft};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use strum::{EnumMessage as _, IntoEnumIterator as _};
 use tauri::{AppHandle, Manager as _, State, WebviewWindow, ipc::Channel};
 use tauri_runtime_cef::CefRuntime;
-use walkdir::WalkDir;
 
 use super::{
     ChannelExt as _, Error,
     agent::AgentState,
     canvas::CanvasChannel,
-    import::{self, Band, Imported, Slicing},
+    import::{self, Imported},
     preferences::Preferences,
     processing::{Job, JobChannel, Processing},
     project::{
         CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary, ProjectSummary,
     },
+    reject_import_while_processing,
+    series::SeriesLibrary,
 };
 use crate::webtoon;
 
@@ -184,7 +183,7 @@ pub(crate) async fn subscribe(
     })
 }
 
-async fn replace_project(handle: &AppHandle<CefRuntime>, opened: Project) -> Result<()> {
+pub(crate) async fn replace_project(handle: &AppHandle<CefRuntime>, opened: Project) -> Result<()> {
     let snapshot = opened.snapshot();
     let page = opened.active_page();
     let info = opened.info();
@@ -252,12 +251,22 @@ pub(crate) async fn get_page(
         .transpose()?)
 }
 
+/// 列出没有任何漫画认领的项目，也就是漫画柜下方的「未分组项目」。
+///
+/// 认领关系由漫画索引决定，不由内核的项目枚举决定：内核只认项目，章项目在它眼里仍然是
+/// 普通项目，能不能单独打开取决于有没有被登记成某一章。
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn list_projects(
     library: State<'_, ProjectLibrary>,
+    series: State<'_, SeriesLibrary>,
 ) -> std::result::Result<Vec<ProjectSummary>, Error> {
-    Ok(library.list()?)
+    let claimed = series.claimed_projects()?;
+    Ok(library
+        .list()?
+        .into_iter()
+        .filter(|project| !claimed.contains(&project.name))
+        .collect())
 }
 
 #[tracing::instrument(
@@ -381,36 +390,18 @@ pub(crate) async fn import(
         return Ok(());
     };
     let imported = tokio_rayon::spawn(move || import::import(files)).await?;
-    let page_count = imported.len();
+    let page_count: usize = imported
+        .iter()
+        .map(|entry| match entry {
+            import::Imported::Page(_) => 1,
+            import::Imported::Strip { bands, .. } => bands.len(),
+        })
+        .sum();
 
     let (commit, page) = {
         let mut project = project.project.lock().await;
         let project = project.as_mut().context("no project is open")?;
-        let role = AssetRole::new("source")?;
-        let patch = project.snapshot().patch(|edit| {
-            for page in imported {
-                let (bytes, format, width, height) = parts(&page);
-                let id = edit.add_page(
-                    PageDraft::new(page.name, f64::from(width), f64::from(height)),
-                    At::End,
-                )?;
-                edit.set_asset(
-                    id,
-                    &role,
-                    AssetInput::new(
-                        bytes,
-                        format.to_mime_type(),
-                        AssetMetadata {
-                            width: Some(width),
-                            height: Some(height),
-                            attributes: Default::default(),
-                        },
-                    ),
-                )?;
-            }
-            Ok(())
-        })?;
-        let commit = project.session.commit(patch).await?;
+        let commit = import::apply(project, imported).await?;
         project.record(vec![commit.revision]);
         project.reconcile_page();
         let page = project.active_page();
@@ -423,23 +414,7 @@ pub(crate) async fn import(
     Ok(())
 }
 
-/// Splits an imported page into the parts a page draft and its asset are built from.
-fn parts(page: &import::Page) -> (Arc<[u8]>, ImageFormat, u32, u32) {
-    (page.bytes.clone(), page.format, page.width, page.height)
-}
-
-/// Rejects a page import while a processing job is running, because both contend for the same
-/// commit sequence.
-fn reject_import_while_processing(processing: &Processing) -> std::result::Result<(), Error> {
-    if processing.stops.lock().is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("pages cannot be imported while processing is running").into())
-    }
-}
-
 /// Opens the picker and returns the paths to import, or `None` when the user cancels.
-///
 /// Both import commands share this one picker, so the file filter, the recursion policy and the
 /// "nothing importable was selected" failure are defined once.
 async fn select_import_paths(
@@ -459,25 +434,10 @@ async fn select_import_paths(
                 .map(|file| file.path().to_owned())
                 .collect::<Vec<_>>()
         }),
-        PageImportSource::Folder => dialog.pick_folder().await.map(|folder| {
-            WalkDir::new(folder.path())
-                .follow_links(false)
-                .into_iter()
-                .filter_map(|entry| match entry {
-                    Ok(entry) if entry.file_type().is_file() => Some(entry.into_path()),
-                    Ok(_) => None,
-                    Err(error) => {
-                        tracing::warn!(%error, "could not inspect an import directory entry");
-                        None
-                    }
-                })
-                .filter(|path| {
-                    path.extension()
-                        .and_then(|extension| extension.to_str())
-                        .is_some_and(|extension| extension.parse::<import::Format>().is_ok())
-                })
-                .collect::<Vec<_>>()
-        }),
+        PageImportSource::Folder => dialog
+            .pick_folder()
+            .await
+            .map(|folder| import::collect_importable(&folder.path()).unwrap_or_default()),
     };
     let Some(files) = files else {
         return Ok(None);
@@ -530,54 +490,7 @@ pub(crate) async fn import_webtoon(
     let (commit, page) = {
         let mut project = project.project.lock().await;
         let project = project.as_mut().context("no project is open")?;
-        let role = AssetRole::new("source")?;
-        let patch = project.snapshot().patch(|edit| {
-            for entry in imported {
-                match entry {
-                    Imported::Page(page) => {
-                        let (bytes, format, width, height) = parts(&page);
-                        let id = edit.add_page(
-                            PageDraft::new(page.name, f64::from(width), f64::from(height)),
-                            At::End,
-                        )?;
-                        edit.set_asset(
-                            id,
-                            &role,
-                            AssetInput::new(
-                                bytes,
-                                format.to_mime_type(),
-                                AssetMetadata {
-                                    width: Some(width),
-                                    height: Some(height),
-                                    attributes: Default::default(),
-                                },
-                            ),
-                        )?;
-                    }
-                    Imported::Strip {
-                        source,
-                        format,
-                        width,
-                        height,
-                        bands,
-                    } => {
-                        webtoon::add_strip(
-                            edit,
-                            webtoon::StripInput {
-                                bytes: source,
-                                width: f64::from(width),
-                                height: f64::from(height),
-                                media_type: format.to_mime_type().to_owned(),
-                                bands: bands.into_iter().map(band_input).collect(),
-                            },
-                            At::End,
-                        )?;
-                    }
-                }
-            }
-            Ok(())
-        })?;
-        let commit = project.session.commit(patch).await?;
+        let commit = import::apply(project, imported).await?;
         project.record(vec![commit.revision]);
         project.reconcile_page();
         let page = project.active_page();
@@ -590,23 +503,7 @@ pub(crate) async fn import_webtoon(
     Ok(())
 }
 
-/// Turns a band the import planner produced into the extension layer's input.
-///
-/// The band's pixels are already cropped and re-encoded, so only its position in the source and
-/// its own height are left to carry over; the width comes from the source because bands are cut
-/// across the full width.
-fn band_input(band: Band) -> webtoon::BandInput {
-    let page = band.page;
-    webtoon::BandInput {
-        label: page.name,
-        y_offset: f64::from(band.y_offset),
-        height: f64::from(page.height),
-        bytes: page.bytes,
-        media_type: page.format.to_mime_type().to_owned(),
-    }
-}
-
-impl From<webtoon::PageImportSlicing> for Slicing {
+impl From<webtoon::PageImportSlicing> for import::Slicing {
     fn from(value: webtoon::PageImportSlicing) -> Self {
         match value {
             webtoon::PageImportSlicing::Auto => Self::Auto,

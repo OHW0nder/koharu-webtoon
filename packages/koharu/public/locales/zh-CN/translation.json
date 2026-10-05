@@ -464,6 +464,50 @@
       "title": "排版"
     }
   },
+  "series": {
+    "backToShelf": "返回漫画柜",
+    "chapterCount": "{{count}} 章",
+    "empty": "这部漫画还没有章节",
+    "kind": {
+      "manga": "页漫",
+      "webtoon": "条漫"
+    },
+    "loading": "载入中…",
+    "export": "导出",
+    "fileCount": "{{count}} 个文件",
+    "importChapter": "导入新章",
+    "noCandidates": "源目录里没有新章节",
+    "pipeline": {
+      "full": "完整流程",
+      "throughOcr": "检测、OCR、翻译",
+      "translateOnly": "仅翻译"
+    },
+    "selectAll": "全选",
+    "selectChapter": "选择 {{name}}",
+    "selectedCount": "已选 {{count}} 章",
+    "status": {
+      "done": "已完成",
+      "pending": "待导入",
+      "ready": "就绪"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "空白项目名",
+    "description": "按漫画与章节管理翻译项目",
+    "emptyDescription": "导入一个文件夹开始：带子目录就是连载，扁平目录就是单行本",
+    "emptyTitle": "还没有漫画",
+    "import": "导入漫画",
+    "importHint": "在漫画柜里导入这一章",
+    "importManga": "页漫文件夹…",
+    "importing": "正在导入…",
+    "importWebtoon": "条漫文件夹…",
+    "newBlank": "新建",
+    "oneshot": "单行本",
+    "progress": "{{done}} / {{total}} 章",
+    "title": "漫画柜",
+    "ungrouped": "未分组项目",
+    "ungroupedEmpty": "没有未归属任何漫画的项目"
+  },
   "start": {
     "create": "创建",
     "deleteAction": "删除项目",

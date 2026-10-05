@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { TitleBar } from '@/components/app/TitleBar'
 import { Editor } from '@/components/editor/Editor'
 import { SettingsPage } from '@/components/preferences/SettingsPage'
+import { SeriesView } from '@/components/series/SeriesView'
 import { StartView } from '@/components/start/StartView'
 import { useProject } from '@/lib/queries'
 import { useKoharuStore } from '@/lib/store'
@@ -19,6 +20,9 @@ export function KoharuApp() {
   const selectLayers = useKoharuStore((state) => state.selectLayers)
   const projectLoaded = project !== undefined
   const settingsOpen = useKoharuStore((state) => state.settingsOpen)
+  // The series survives opening a chapter, so closing that chapter lands back on its chapter list
+  // rather than on the shelf.
+  const seriesId = useKoharuStore((state) => state.seriesId)
   const activePage = project?.active_page
   const editorOpen = project !== undefined && project !== null && !settingsOpen
 
@@ -46,7 +50,11 @@ export function KoharuApp() {
           </div>
         </main>
       ) : project === null ? (
-        <StartView />
+        seriesId ? (
+          <SeriesView id={seriesId} />
+        ) : (
+          <StartView />
+        )
       ) : (
         <Editor />
       )}

@@ -8,6 +8,7 @@ pub(crate) mod output;
 pub(crate) mod preferences;
 pub(crate) mod processing;
 pub(crate) mod project;
+pub(crate) mod series;
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -36,8 +37,24 @@ impl Serialize for Error {
     }
 }
 
+use processing::Processing;
+
 pub(crate) trait ChannelExt<T> {
     fn publish(&self, value: T);
+}
+
+/// Rejects a page import while a processing job is running.
+///
+/// Both contend for the same project commit sequence, so this is the one guard every import path
+/// goes through regardless of whether it opens a project, a shelf, or a whole series.
+pub(crate) fn reject_import_while_processing(
+    processing: &Processing,
+) -> std::result::Result<(), Error> {
+    if processing.stops.lock().is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("pages cannot be imported while processing is running").into())
+    }
 }
 
 impl<T: IpcResponse> ChannelExt<T> for Mutex<Option<Channel<T>>> {
@@ -74,6 +91,13 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             lifecycle::close_project,
             lifecycle::import,
             lifecycle::import_webtoon,
+            series::list_series,
+            series::get_series,
+            series::import_series,
+            series::scan_series_source,
+            series::import_series_chapter,
+            series::process_series_chapters,
+            series::export_series_chapters,
             lifecycle::select_page,
             editing::rename_page,
             editing::delete_pages,

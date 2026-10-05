@@ -36,16 +36,17 @@ describe('StartView', () => {
         : null,
     )
     vi.spyOn(commands, 'listProjects').mockResolvedValue([])
+    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
     const create = vi.spyOn(commands, 'createProject').mockImplementation(async () => {
       opened = true
       return null
     })
     renderProjectFlow()
-    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Project name' }), {
+    expect(await screen.findByRole('heading', { name: 'Shelf' })).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Blank project name' }), {
       target: { value: 'Volume 1' },
     })
-    const createButton = screen.getByRole('button', { name: 'Create' })
+    const createButton = screen.getByRole('button', { name: 'New' })
     await waitFor(() => expect(createButton).toBeEnabled())
     fireEvent.click(createButton)
     await waitFor(() => expect(create).toHaveBeenCalledWith('Volume 1'))
@@ -66,6 +67,7 @@ describe('StartView', () => {
         : null,
     )
     vi.spyOn(commands, 'listProjects').mockResolvedValue([{ name: 'Blue Archive' }])
+    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
     const open = vi.spyOn(commands, 'openProject').mockImplementation(async () => {
       opened = true
       return null
@@ -85,8 +87,9 @@ describe('StartView', () => {
     vi.spyOn(commands, 'listProjects')
       .mockResolvedValueOnce([{ name: 'Blue Archive' }])
       .mockResolvedValueOnce([])
+    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
     const remove = vi.spyOn(commands, 'deleteProject').mockResolvedValue(null)
-    render(<StartView />)
+    renderProjectFlow()
 
     const deleteButton = await screen.findByRole('button', { name: 'Delete Blue Archive' })
     await waitFor(() => expect(deleteButton).toBeEnabled())

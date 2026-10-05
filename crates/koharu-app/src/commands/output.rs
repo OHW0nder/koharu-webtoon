@@ -57,12 +57,24 @@ pub(crate) async fn export(
         let project = project.as_ref().context("no project is open")?;
         (project.name.clone(), project.snapshot())
     };
-    let pages = snapshot.pages().map(|page| page.id()).collect::<Vec<_>>();
-    if pages.is_empty() {
+    if snapshot.pages().next().is_none() {
         return Err(anyhow::anyhow!("there are no pages to export").into());
     }
-    let dialog = rfd::AsyncFileDialog::new().set_parent(&window);
-    let destination = match format {
+    let Some(destination) = pick_destination(&window, format, &name).await else {
+        return Ok(());
+    };
+    export_snapshot(snapshot, format, destination, &desktop).await?;
+    Ok(())
+}
+
+/// Asks where an export should land. `None` means the user cancelled.
+async fn pick_destination(
+    window: &WebviewWindow<CefRuntime>,
+    format: ExportFormat,
+    name: &str,
+) -> Option<std::path::PathBuf> {
+    let dialog = rfd::AsyncFileDialog::new().set_parent(window);
+    let picked = match format {
         ExportFormat::Png | ExportFormat::Psd => dialog.pick_folder().await,
         ExportFormat::Cbz => {
             dialog
@@ -72,9 +84,23 @@ pub(crate) async fn export(
                 .await
         }
     };
-    let Some(destination) = destination.map(|destination| destination.path().to_owned()) else {
-        return Ok(());
-    };
+    picked.map(|destination| destination.path().to_owned())
+}
+
+/// Renders every page of one project and writes the result.
+///
+/// The series batch calls this too, so a chapter exported on its own and the same chapter exported
+/// as part of a batch produce identical bytes; the only difference is where `destination` points.
+pub(crate) async fn export_snapshot(
+    snapshot: Snapshot,
+    format: ExportFormat,
+    destination: std::path::PathBuf,
+    desktop: &Desktop,
+) -> Result<()> {
+    let pages = snapshot.pages().map(|page| page.id()).collect::<Vec<_>>();
+    if pages.is_empty() {
+        return Err(anyhow::anyhow!("there are no pages to export"));
+    }
     let renderer = desktop.renderer();
     let rasterizer = desktop.rasterizer().await?;
     let frames = try_join_all(pages.iter().map(|&page| renderer.render(&snapshot, page))).await?;

@@ -464,6 +464,50 @@
       "title": "Typesetting"
     }
   },
+  "series": {
+    "backToShelf": "Back to the shelf",
+    "chapterCount": "{{count}} chapters",
+    "empty": "This series has no chapters yet",
+    "kind": {
+      "manga": "Pages",
+      "webtoon": "Webtoon"
+    },
+    "loading": "Loading…",
+    "export": "Export",
+    "fileCount": "{{count}} files",
+    "importChapter": "New chapter",
+    "noCandidates": "No new chapters in the source folder",
+    "pipeline": {
+      "full": "Full run",
+      "throughOcr": "Detect, OCR, translate",
+      "translateOnly": "Translate only"
+    },
+    "selectAll": "Select all",
+    "selectChapter": "Select {{name}}",
+    "selectedCount": "{{count}} selected",
+    "status": {
+      "done": "Done",
+      "pending": "Pending",
+      "ready": "Ready"
+    }
+  },
+  "shelf": {
+    "blankPlaceholder": "Blank project name",
+    "description": "Translation projects by series and chapter",
+    "emptyDescription": "Import a folder: sub-directories make a serial, a flat folder makes a single volume",
+    "emptyTitle": "No series yet",
+    "import": "Import",
+    "importHint": "Import this chapter from the shelf",
+    "importManga": "Page folder…",
+    "importing": "Importing…",
+    "importWebtoon": "Webtoon folder…",
+    "newBlank": "New",
+    "oneshot": "Single",
+    "progress": "{{done}} / {{total}} chapters",
+    "title": "Shelf",
+    "ungrouped": "Ungrouped projects",
+    "ungroupedEmpty": "No projects outside a series"
+  },
   "start": {
     "create": "Create",
     "deleteAction": "Delete project",

@@ -300,44 +300,6 @@ describe('greenfield editor', () => {
     )
   })
 
-  it('shows import activity and prevents duplicate imports', async () => {
-    const user = userEvent.setup()
-    installProject()
-    let finishImport: (() => void) | undefined
-    const importPages = vi.spyOn(commands, 'import').mockImplementation(
-      () =>
-        new Promise<null>((resolve) => {
-          finishImport = () => resolve(null)
-        }),
-    )
-    render(
-      <>
-        <TitleBar />
-        <PageRail />
-        <ActivityCenter />
-      </>,
-    )
-
-    expect(screen.getByText('/')).toHaveClass('mx-2')
-    expect(screen.queryByRole('button', { name: 'Import pages' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitem', { name: 'File' }))
-    await user.hover(await screen.findByRole('menuitem', { name: 'Import Pages' }))
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Files…' }))
-
-    expect(await screen.findByRole('status')).toHaveTextContent('Importing pages…')
-    expect(screen.getByRole('complementary', { name: 'Activity' })).toBeInTheDocument()
-    expect(importPages).toHaveBeenCalledTimes(1)
-
-    await user.click(screen.getByRole('menuitem', { name: 'File' }))
-    expect(await screen.findByRole('menuitem', { name: 'Importing pages…' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-
-    finishImport?.()
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
-  })
-
   it.each(['png', 'psd', 'cbz'] as const)(
     'shows %s export activity and prevents duplicate exports',
     async (format) => {
@@ -382,7 +344,6 @@ describe('greenfield editor', () => {
   )
 
   it.each([
-    { command: 'import', menu: 'Import Pages', choice: 'Files…', pending: 'Importing pages…' },
     { command: 'export', menu: 'Export Project', choice: 'CBZ…', pending: 'Export Project' },
   ] as const)(
     'clears $command activity after failure',

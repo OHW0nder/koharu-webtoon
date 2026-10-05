@@ -61,12 +61,18 @@ interface KoharuStore {
   processingScope: PipelineScope
   processingStages: Stage[]
   settingsOpen: boolean
+  /// Which series' chapter list is being shown. `null` means the shelf, which is also where the
+  /// user lands after closing a project. It survives opening a chapter so that closing that
+  /// chapter returns to the list it came from instead of the shelf.
+  seriesId: string | null
   shortcuts: Shortcuts
   selectPages: (pages: EntityId[]) => void
   showInspector: (section: InspectorSection) => void
   setProcessingScope: (scope: PipelineScope) => void
   setProcessingStages: (stages: Stage[]) => void
   setSettingsOpen: (open: boolean) => void
+  showSeries: (id: string) => void
+  showShelf: () => void
   selectLayers: (layers: EntityId[]) => void
   setTool: (tool: CanvasTool) => void
   setBrush: (brush: CanvasBrush) => void
@@ -109,12 +115,15 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   processingScope: 'selected-pages',
   processingStages: [...pipelineStages],
   settingsOpen: false,
+  seriesId: null,
   shortcuts: defaultShortcuts,
   selectPages: (selectedPages) => set({ selectedPages: [...new Set(selectedPages)] }),
   showInspector: (inspector) => set({ inspector }),
   setProcessingScope: (processingScope) => set({ processingScope }),
   setProcessingStages: (processingStages) => set({ processingStages }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  showSeries: (seriesId) => set({ seriesId }),
+  showShelf: () => set({ seriesId: null }),
   selectLayers: (selectedLayers) => set({ selectedLayers: [...new Set(selectedLayers)] }),
   setTool: (tool) => set({ tool }),
   setBrush: (brush) => set({ brush }),
