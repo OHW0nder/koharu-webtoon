@@ -28,7 +28,10 @@ pub(crate) fn translations(
     text: &str,
     source_segments: &[String],
 ) -> anyhow::Result<Vec<String>> {
-    let output = serde_json::from_str::<TranslationOutput>(text).with_context(|| {
+    // A response that does not close its object is handed over whole so the
+    // error names the real failure (a truncated value, not a missing one).
+    let object = json_object(text).unwrap_or(text);
+    let output = serde_json::from_str::<TranslationOutput>(object).with_context(|| {
         format!(
             "{provider} returned invalid translation JSON for {} segments; response was: {}",
             source_segments.len(),
@@ -46,6 +49,53 @@ pub(crate) fn translations(
     }
 
     Ok(translations)
+}
+
+/// Locates the first balanced JSON object in a model response.
+///
+/// A provider's JSON mode constrains the shape of the object, not the whole
+/// message: models still wrap it in a fence, prefix it with a sentence, or —
+/// as a reasoning model does when its thinking lands in the same field as the
+/// answer — keep reasoning aloud after the closing brace and revise the
+/// translation in prose. The object itself stays parseable in every one of
+/// those cases, so the boundary this function defines is exactly the boundary
+/// the parser needs: the object is recovered, anything around it is not
+/// trusted. Scaffolding that never closes is left for the caller to reject.
+///
+/// Braces and quotes inside string literals are not structure. Translated
+/// dialogue routinely contains both, including unbalanced ones from a
+/// truncated or degraded `text` value, so a naive depth count would end the
+/// object mid-value and hand the parser a fragment.
+fn json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0_usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, byte) in text.as_bytes()[start..].iter().copied().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..start + offset + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Keeps a model response readable in a log line without truncating so hard
@@ -315,12 +365,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrapped_and_malformed_json() {
+    fn rejects_malformed_and_truncated_json() {
         let source = ["one".to_owned(), "two".to_owned()];
         for response in [
-            "```json\n{\"translations\":[{\"id\":0,\"text\":\"hello\"},{\"id\":1,\"text\":\"world\"}]}\n```",
             r#"{translations: [{id: 0, text: 'hello'}, {id: 1, text: 'world'},],}"#,
-            r#"Here is the result: {"translations": [{"id": 0, "text": "hello"}, {"id": 1, "text": "world"},]}"#,
             "{\"translations\":[{\"id\":0,\"text\":\"hello\"},{\"id\":1,\"text\":\"world\"",
         ] {
             assert!(
@@ -328,6 +376,69 @@ mod tests {
                 "{response}"
             );
         }
+    }
+
+    #[test]
+    fn recovers_the_object_from_a_surrounded_response() {
+        // The failure this covers: a reasoning model emits a complete object
+        // and then keeps thinking in the same field, so the trailing prose is
+        // what made the whole response unparseable.
+        let source = ["one".to_owned(), "two".to_owned()];
+        let response = concat!(
+            "{\"translations\":\n",
+            "[{\"id\":0,\"text\":\"hello\"},{\"id\":1,\"text\":\"world\"}]}\n\n",
+            "Wait, I need to double-check this input.\n\nFinal:\n",
+            "hello / world"
+        );
+
+        assert_eq!(
+            translations("test", response, &source).unwrap(),
+            ["hello", "world"]
+        );
+    }
+
+    #[test]
+    fn recovers_the_object_from_a_fenced_response() {
+        let source = ["one".to_owned(), "two".to_owned()];
+        let response = "```json\n{\"translations\":[{\"id\":0,\"text\":\"hello\"},{\"id\":1,\"text\":\"world\"}]}\n```";
+
+        assert_eq!(
+            translations("test", response, &source).unwrap(),
+            ["hello", "world"]
+        );
+    }
+
+    #[test]
+    fn object_extraction_ends_on_the_brace_that_balances_the_start() {
+        // Dialogue contains quotes, backslashes, and braces of its own; a
+        // count that ignored string literals would stop inside this value and
+        // leave the caller with a fragment.
+        let text = r#"{"translations":[{"id":0,"text":"a \"quoted\" {note} C:\\ path"}]}"#;
+
+        assert_eq!(
+            json_object(text),
+            Some(r#"{"translations":[{"id":0,"text":"a \"quoted\" {note} C:\\ path"}]}"#)
+        );
+    }
+
+    #[test]
+    fn object_extraction_reports_nothing_for_an_unclosed_response() {
+        assert_eq!(json_object(r#"{"translations":[{"id":0,"text":"hel"#), None);
+        assert_eq!(json_object("no object here"), None);
+    }
+
+    #[test]
+    fn an_unclosed_response_still_reports_the_original_failure() {
+        // Falling back to the whole response keeps the error anchored to what
+        // actually went wrong instead of claiming the object was never there.
+        let source = ["one".to_owned()];
+        let error = format!(
+            "{:#}",
+            translations("test", r#"{"translations":[{"id":0,"text":"hel"#, &source)
+                .expect_err("truncated text should fail")
+        );
+
+        assert!(error.contains("EOF while parsing a string"), "{error}");
     }
 
     #[test]

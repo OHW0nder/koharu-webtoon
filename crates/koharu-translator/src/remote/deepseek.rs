@@ -44,6 +44,13 @@ pub(super) async fn models(client: &Client) -> Result<Vec<Model>> {
         .collect())
 }
 
+/// Sends one translation request.
+///
+/// Sampling is left to DeepSeek unless the caller set it, matching every other
+/// hosted provider. A provider-level temperature floor belongs to the model
+/// rather than here: this one existed to lift creativity, which is the wrong
+/// trade for a response that has to satisfy `response_format` and loses the
+/// whole page when a single segment degrades.
 pub(super) async fn translate(
     client: &Client,
     _config: &DeepSeekConfig,
@@ -76,7 +83,7 @@ pub(super) async fn translate(
                 content: user_content,
             },
         ],
-        temperature: generation.temperature.or(Some(1.3)),
+        temperature: generation.temperature,
         top_p: generation.top_p,
         max_tokens: generation.max_tokens,
         thinking: generation.reasoning.map(|enabled| ThinkingConfig {
@@ -205,7 +212,7 @@ mod tests {
             response_format: ResponseFormat {
                 kind: "json_object",
             },
-            temperature: Some(1.3),
+            temperature: None,
             top_p: None,
         };
         let value = serde_json::to_value(body).unwrap();
@@ -216,5 +223,37 @@ mod tests {
         assert!(value.get("json_schema").is_none());
         assert!(value.get("frequency_penalty").is_none());
         assert!(value.get("presence_penalty").is_none());
+    }
+
+    #[test]
+    fn sampling_is_left_to_the_service_unless_the_caller_sets_it() {
+        let body = |temperature| ChatRequest {
+            model: "deepseek-chat",
+            messages: [
+                Message {
+                    role: "system",
+                    content: MessageContent::Text("return json".to_owned()),
+                },
+                Message {
+                    role: "user",
+                    content: MessageContent::Text("translate".to_owned()),
+                },
+            ],
+            thinking: None,
+            max_tokens: None,
+            response_format: ResponseFormat {
+                kind: "json_object",
+            },
+            temperature,
+            top_p: None,
+        };
+
+        // A floor here would override the caller on every request and had no
+        // counterpart at any other provider.
+        assert!(serde_json::to_value(body(None)).unwrap().get("temperature").is_none());
+        assert_eq!(
+            serde_json::to_value(body(Some(0.2))).unwrap()["temperature"].as_f64(),
+            Some(0.2_f32 as f64)
+        );
     }
 }
