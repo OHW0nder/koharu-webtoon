@@ -164,6 +164,31 @@ impl FitTransform {
         }
         Some([x1 as f32, y1 as f32, x2 as f32, y2 as f32])
     }
+
+    /// The page's window inside the native mask grid, as `(left, top, right, bottom)`.
+    ///
+    /// The mask head runs at a fixed fraction of the square model input, so its
+    /// grid spans the whole square — letterbox margin included. The page is only
+    /// the content window of that grid, and under a fit that leaves a margin the
+    /// two differ by more than a rounding error: on a 720x2074 page the content
+    /// is 400 of 1152 input pixels, so three quarters of the grid is padding.
+    /// Projecting the whole grid onto the page therefore scales the mask by the
+    /// wrong factor and slides it off the text it belongs to, while `to_image`
+    /// puts the box in the right place. Both describe the same instance, so they
+    /// have to be cropped alike.
+    fn mask_window(&self, grid_width: i64, grid_height: i64) -> (i64, i64, i64, i64) {
+        let scale_x = grid_width as f64 / f64::from(self.resolution);
+        let scale_y = grid_height as f64 / f64::from(self.resolution);
+        let left = (f64::from(self.offset_x) * scale_x).floor() as i64;
+        let top = (f64::from(self.offset_y) * scale_y).floor() as i64;
+        // The far edge is inclusive of the last covered cell, hence the ceil on
+        // the content extent and the exclusive bound on the grid.
+        let right = ((f64::from(self.offset_x + self.content_width) * scale_x).ceil() as i64)
+            .clamp(left + 1, grid_width);
+        let bottom = ((f64::from(self.offset_y + self.content_height) * scale_y).ceil() as i64)
+            .clamp(top + 1, grid_height);
+        (left, top, right, bottom)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -298,6 +323,18 @@ impl KoharuLayoutRFDetrImageProcessor {
         // avoids allocating resized masks for candidates rejected by threshold.
         let masks = output.pred_masks.i(0).index_select(0, &query_indexes);
 
+        // The mask grid spans the whole square input, letterbox margin included,
+        // so the page is only a window of it. Under a fit that leaves a margin the
+        // two differ by far more than a rounding error: a 720x2074 page fills 400
+        // of 1152 input pixels, leaving three quarters of the grid as padding.
+        // Every mask therefore has to be cropped to that window before it is
+        // projected, or it lands somewhere else on the page than `to_image` lands
+        // the box for the same instance. The grid is shared by every query, so the
+        // window is resolved once.
+        let mask_grid = masks.size();
+        let (window_left, window_top, window_right, window_bottom) =
+            transform.mask_window(mask_grid[2], mask_grid[1]);
+
         let floats = Tensor::cat(&[scores.unsqueeze(1), boxes], 1);
         let floats = tensor_to_vec_f32(&floats)?;
         let labels = tensor_to_vec_i64(&labels)?;
@@ -314,11 +351,15 @@ impl KoharuLayoutRFDetrImageProcessor {
                 continue;
             };
             // RF-DETR defines masks by bilinearly projecting each native mask to
-            // the source image and thresholding at zero. Resolve one mask at a
-            // time to preserve that exact contract without retaining an
-            // N-by-page tensor, then keep only its non-zero page-space extent.
+            // the source image and thresholding at zero. The projection starts at
+            // the page's window of the native grid so the mask and the box describe
+            // the same place on the page. Resolve one mask at a time to preserve
+            // that contract without retaining an N-by-page tensor, then keep only
+            // its non-zero page-space extent.
             let mask = masks
                 .i(index as i64)
+                .narrow(0, window_top, window_bottom - window_top)
+                .narrow(1, window_left, window_right - window_left)
                 .unsqueeze(0)
                 .unsqueeze(0)
                 .upsample_bilinear2d(
@@ -712,6 +753,66 @@ mod tests {
                 stretched.to_image(box_in),
                 "{side}x{side} round trip must not depend on the fit strategy",
             );
+        }
+    }
+
+    #[test]
+    fn mask_window_tracks_the_page_inside_the_native_grid() {
+        // A 720x2074 page fills 400 of the 1152 input pixels, so the native
+        // mask grid holds it in a 100-cell window of 288. Projecting the whole
+        // grid instead would scale the mask by the wrong factor and slide it off
+        // the text, while `to_image` still placed the box correctly.
+        let transform = letterbox(720, 2074);
+        assert_eq!(transform.content_width, 400);
+        assert_eq!(transform.offset_x, 376);
+        let grid = 288.0;
+        let input = f64::from(transform.resolution);
+        let (left, top, right, bottom) = transform.mask_window(288, 288);
+
+        assert_eq!(
+            (
+                (left as f64) / grid,
+                (top as f64) / grid,
+                (right as f64) / grid,
+                (bottom as f64) / grid,
+            ),
+            (
+                f64::from(transform.offset_x) / input,
+                f64::from(transform.offset_y) / input,
+                f64::from(transform.offset_x + transform.content_width) / input,
+                f64::from(transform.offset_y + transform.content_height) / input,
+            ),
+            "the mask window must cover exactly the page's share of the model input",
+        );
+    }
+
+    #[test]
+    fn mask_window_is_the_whole_grid_when_there_is_no_margin() {
+        // Stretch fills the square, so cropping has to be a no-op and the mask
+        // projection has to keep behaving exactly as it did before the window
+        // existed. This is the case the previous code was accidentally correct
+        // for, and it is what made the letterbox defect invisible.
+        for (width, height) in [(720, 2074), (1000, 1000), (720, 14317)] {
+            let transform = FitTransform::new(width, height, RESOLUTION, InputFit::Stretch).unwrap();
+            assert_eq!(
+                transform.mask_window(288, 288),
+                (0, 0, 288, 288),
+                "{width}x{height} has no margin to crop away",
+            );
+        }
+    }
+
+    #[test]
+    fn mask_window_stays_inside_the_grid_on_extreme_pages() {
+        for (width, height) in [(720, 14317), (14317, 720), (1, 14317), (1000, 1000)] {
+            let transform = letterbox(width, height);
+            for grid in [1, 4, 288] {
+                let (left, top, right, bottom) = transform.mask_window(grid, grid);
+                assert!(
+                    0 <= left && left < right && right <= grid && 0 <= top && top < bottom && bottom <= grid,
+                    "{width}x{height} on a {grid}-cell grid produced {left},{top},{right},{bottom}",
+                );
+            }
         }
     }
 
