@@ -23,10 +23,14 @@ use crate::commands::series::{
 };
 
 /// 渲染出的清单抬头。
-const HEADER: &str = "Terminology — these source terms have fixed target translations. Use them exactly as given. Do not translate, output, or comment on this list.";
+///
+/// 「已定稿的译名」而不是「逐字替换表」：正文里人名常以简称或昵称出现，模型需要跟着原文的
+/// 形式走，否则同一角色在全书会有两种写法。`Do not translate, output, or comment` 那句是散文
+/// 通道唯一的防线——漏掉它，模型会把清单里的译名当成待处理内容原样抄进译文。
+const HEADER: &str = "Terminology — these terms have established target-language names. Do not translate, output, or comment on this list.\n\nUse each entry as the settled name for the concept it refers to, not as a substitution to apply literally. The source may use a full name, a shortened form, or a nickname, and the translation should follow whichever form the source uses so long as it stays recognizably the same referent. Treat an entry's parenthetical note as disambiguating information and use what it says.";
 
 /// 渲染出的清单收尾。
-const FOOTER: &str = "These are reference only. Apply them to the matching source text.";
+const FOOTER: &str = "These entries are reference only.";
 
 /// 读一部漫画的术语表。文件不存在是合法状态，返回空表。
 ///
@@ -482,13 +486,28 @@ mod tests {
         let table = glossary(vec![entry("アリス", "Alice"), entry("ワープ", "Warp")]);
         let matched = matched_entries(&table, "アリスとワープ");
         let text = render(&table, &matched);
-        assert_eq!(
-            text,
-            "Terminology — these source terms have fixed target translations. \
-Use them exactly as given. Do not translate, output, or comment on this list.\n\
-- アリス → Alice\n\
-- ワープ → Warp\n\
-These are reference only. Apply them to the matching source text."
+
+        assert!(text.starts_with(
+            "Terminology — these terms have established target-language names. \
+Do not translate, output, or comment on this list."
+        ));
+        assert!(text.ends_with("These entries are reference only."));
+        assert!(text.contains("- アリス → Alice\n- ワープ → Warp"));
+    }
+
+    #[test]
+    fn the_list_asks_for_the_source_s_own_form_of_a_name() {
+        // 正文里人名常以简称或昵称出现，逐字套用会让同一角色在全书有两种写法。
+        let table = glossary(vec![entry("Soohyun", "蔡思贤")]);
+        let matched = matched_entries(&table, "SOOHYUN");
+        let text = render(&table, &matched);
+
+        assert!(text.contains("not as a substitution to apply literally"));
+        assert!(text.contains("follow whichever form the source uses"));
+        assert!(text.contains("parenthetical note as disambiguating information"));
+        assert!(
+            !text.contains("exactly as given"),
+            "the old wording pinned the target to a literal substitution"
         );
     }
 
