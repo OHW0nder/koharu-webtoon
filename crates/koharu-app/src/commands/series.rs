@@ -1341,7 +1341,6 @@ async fn current_snapshot(handle: &AppHandle<CefRuntime>) -> Result<koharu_scene
 pub(crate) async fn export_series_chapters(
     id: String,
     projects: Vec<String>,
-    format: ExportFormat,
     window: WebviewWindow<CefRuntime>,
     handle: AppHandle<CefRuntime>,
     library: State<'_, SeriesLibrary>,
@@ -1386,7 +1385,7 @@ pub(crate) async fn export_series_chapters(
         let opened = project_library.open(&chapter.project).await?;
         replace_project(&handle, opened).await?;
         let snapshot = current_snapshot(&handle).await?;
-        let pages = output::render_pages(snapshot, format, &desktop).await?;
+        let pages = output::render_pages(snapshot, ExportFormat::Cbz, &desktop).await?;
         let folder = format!("{}/{}", title, entry_name(&chapter.title));
         for (name, bytes) in pages {
             // PNG data is already compressed.

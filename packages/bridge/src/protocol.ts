@@ -184,7 +184,7 @@ export const commands = {
 	 *  Rendering is a serial loop because the kernel holds one open project at a time, and each chapter
 	 *  is written into the archive as soon as it is rendered — the whole volume is never in memory at once.
 	 */
-	exportSeriesChapters: (id: string, projects: string[], format: ExportFormat) => __TAURI_INVOKE<null>("export_series_chapters", { id, projects, format }),
+	exportSeriesChapters: (id: string, projects: string[]) => __TAURI_INVOKE<null>("export_series_chapters", { id, projects }),
 	selectPage: (page: EntityId) => __TAURI_INVOKE<PageSelection>("select_page", { page }).then((v) => (({...v,page:({...v.page,layers:v.page.layers.map(i=>i),regions:v.page.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))})}) as typeof v)),
 	renamePage: (page: EntityId, label: string) => __TAURI_INVOKE<null>("rename_page", { page, label }),
 	deletePages: (pages: EntityId[]) => __TAURI_INVOKE<null>("delete_pages", { pages }),

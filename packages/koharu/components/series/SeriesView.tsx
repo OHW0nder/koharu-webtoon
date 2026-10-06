@@ -133,73 +133,22 @@ export function SeriesView({ id }: { id: string }) {
           onImport={(directory, kind, ad) => importChapter({ directory, kind, ad })}
         />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type='button'
-                size='sm'
-                variant='outline'
-                disabled={busy || targets.length === 0}
-                aria-busy={processing}
-                className='h-7 gap-1.5 text-[10px]'
-              />
-            }
-          >
-            {processing ? (
-              <LoaderCircle className='size-3 animate-spin' />
-            ) : (
-              <Rows3 className='size-3' />
-            )}
-            {t('series.process')}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='end' className='min-w-40 border border-border/50 p-0.5'>
-            {PIPELINES.map((pipeline) => (
-              <DropdownMenuItem
-                key={pipeline.id}
-                className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px]'
-                onClick={() => start(pipeline.operation)}
-              >
-                {pipeline.id === 'full' ? t('series.pipeline.full') : t(`phase.${pipeline.id}`)}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type='button'
-                size='sm'
-                variant='outline'
-                disabled={busy || targets.length === 0}
-                aria-busy={exporting}
-                className='h-7 gap-1.5 text-[10px]'
-              />
-            }
-          >
-            {exporting ? (
-              <LoaderCircle className='size-3 animate-spin' />
-            ) : (
-              <Download className='size-3' />
-            )}
-            {t('series.export')}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='end' className='min-w-32 border border-border/50 p-0.5'>
-            {(['cbz', 'png', 'psd'] as const).map((format) => (
-              <DropdownMenuItem
-                key={format}
-                className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px]'
-                onClick={() =>
-                  void exportChapters({ projects: targets, format }).catch(() => undefined)
-                }
-              >
-                {format.toUpperCase()}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button
+          type='button'
+          size='sm'
+          variant='outline'
+          disabled={busy || targets.length === 0}
+          aria-busy={exporting}
+          className='h-7 gap-1.5 text-[10px]'
+          onClick={() => void exportChapters({ projects: targets }).catch(() => undefined)}
+        >
+          {exporting ? (
+            <LoaderCircle className='size-3 animate-spin' />
+          ) : (
+            <Download className='size-3' />
+          )}
+          {t('series.export')}
+        </Button>
 
         <DeleteSeriesButton
           busy={busy}

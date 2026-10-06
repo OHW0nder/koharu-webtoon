@@ -13,7 +13,6 @@ import {
   commands,
   type AdBands,
   type ChapterKind,
-  type ExportFormat,
   type FontFamily,
   type Glossary,
   type Operation,
@@ -288,11 +287,11 @@ export function useProcessSeriesChapters(id: string) {
 export function useExportSeriesChapters(id: string) {
   const mutation = useMutation({
     mutationKey: ['export-series-chapters', id],
-    mutationFn: (input: { projects: string[]; format: ExportFormat }) =>
-      call(commands.exportSeriesChapters, id, input.projects, input.format),
+    mutationFn: (input: { projects: string[] }) =>
+      call(commands.exportSeriesChapters, id, input.projects),
   })
   return {
-    exportChapters: mutation.mutateAsync,
+    exportChapters: (input: { projects: string[] }) => mutation.mutateAsync(input),
     exporting: useIsMutating({ mutationKey: ['export-series-chapters', id] }) > 0,
   }
 }
