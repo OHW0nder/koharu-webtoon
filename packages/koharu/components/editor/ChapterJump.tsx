@@ -89,7 +89,10 @@ export function ChapterJump() {
           <p className='px-1.5 py-1 text-[10px] font-medium text-muted-foreground'>
             {series.data?.title ?? t('series.loading')}
           </p>
-          <ScrollArea className='max-h-72'>
+          {/* The height cap must sit on the viewport too: it is `size-full`, and a percentage height
+              against an auto-height parent resolves to `auto`, which lets a long chapter list spill
+              out of the popover instead of scrolling inside it. */}
+          <ScrollArea className='min-h-0 max-h-72' viewportClassName='max-h-72'>
             <ul className='grid gap-0.5'>
               {chapters.map((entry, position) => (
                 <li key={entry.project}>
