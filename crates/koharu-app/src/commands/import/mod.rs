@@ -362,19 +362,28 @@ fn read(mut paths: Vec<PathBuf>) -> Result<Vec<Page>> {
 /// anything it considers readable as one page, so the geometry rule lives in exactly one
 /// place. The local pre-check exists only to skip the full decode of images that cannot
 /// possibly be cut, and it reads the planner's own thresholds instead of restating them.
+///
+/// The ad bands are resolved per image before any of them is processed, because they describe the two
+/// ends of a chapter rather than the two ends of every file in it.
 fn cut(pages: Vec<Page>, slicing: Slicing, ad: AdBands) -> (Vec<Imported>, AdBandReport) {
     let params = slicing.params();
+    let last = pages.len().saturating_sub(1);
     let outcomes = pages
         .into_par_iter()
-        .map(|page| cut_one(page, &params, ad))
+        .enumerate()
+        .map(|(index, page)| {
+            let bands = ad.for_page(index, last);
+            (bands, cut_one(page, &params, bands))
+        })
         .collect::<Vec<_>>();
     let mut imported = Vec::with_capacity(outcomes.len());
     let mut report = AdBandReport::default();
-    for outcome in outcomes {
+    for (bands, outcome) in outcomes {
         match outcome {
             CutOutcome::Imported(entry) => {
-                // 切片只会在规划器真的分了页时产生，所以「设了值且产出 Strip」正好就是被裁过的那批图。
-                if !ad.is_empty() && matches!(entry, Imported::Strip { .. }) {
+                // 切片只会在规划器真的分了页时产生，所以「这张图背着自己的广告带且产出 Strip」正好就是
+                // 被裁过的那批图。
+                if !bands.is_empty() && matches!(entry, Imported::Strip { .. }) {
                     report.trimmed += 1;
                 }
                 imported.push(entry);
@@ -406,9 +415,9 @@ enum CutOutcome {
     Dropped { name: String, reason: AdBandSkip },
 }
 
+/// 裁一张源图，`ad` 是这张图自己承担的那一端广告带（见 [`AdBands::for_page`]）。
 fn cut_one(page: Page, params: &SliceParams, ad: AdBands) -> CutOutcome {
-    // 广告带描述的是条漫一章首尾的站点广告，因此规划器会整张留下的图也整张留下：削它等于把一个
-    // 本来就能读的一页上面的广告去掉。
+    // 规划器会整张留下的图也整张留下：削它等于把一个本来就能读的一页上面的广告去掉。
     if !may_be_a_webtoon(page.width, page.height, params) {
         return CutOutcome::Imported(Imported::Page(page));
     }
@@ -807,6 +816,37 @@ mod tests {
         assert_eq!(cursor, 6000 - tail, "the bands must stop at the tail band");
 
         fs::remove_dir_all(strip.parent().unwrap()).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn only_the_chapter_s_own_ends_carry_the_ad_bands() {
+        // 三张长图是一章：广告只长在首图的顶部和末图的底部。
+        let (head, tail) = (400u32, 300u32);
+        let first = fixture("page1.png", &strip_image(360, 6000));
+        let middle = fixture("page2.png", &strip_image(360, 6000));
+        let last = fixture("page3.png", &strip_image(360, 6000));
+        let imported = import_webtoon(
+            vec![first.clone(), middle.clone(), last.clone()],
+            Slicing::Auto,
+            AdBands { head, tail },
+        )
+        .expect("import");
+
+        // 首图只削顶部，末图只削底部，中间那张两侧都是正文。
+        let first_bands = bands_of(&imported.imported, "page1");
+        let middle_bands = bands_of(&imported.imported, "page2");
+        let last_bands = bands_of(&imported.imported, "page3");
+        assert_eq!(first_bands.first().unwrap().0, head);
+        assert_eq!(first_bands.iter().map(|band| band.1).sum::<u32>(), 6000 - head);
+        assert_eq!(middle_bands.first().unwrap().0, 0);
+        assert_eq!(middle_bands.iter().map(|band| band.1).sum::<u32>(), 6000);
+        assert_eq!(last_bands.first().unwrap().0, 0);
+        assert_eq!(last_bands.iter().map(|band| band.1).sum::<u32>(), 6000 - tail);
+        // 只有背着自己那一端广告带的两张算被裁过。
+        assert_eq!(imported.ad_bands.trimmed(), 2);
+        assert!(imported.ad_bands.skipped().is_empty());
+
+        fs::remove_dir_all(first.parent().unwrap()).expect("remove fixture directory");
     }
 
     #[test]
