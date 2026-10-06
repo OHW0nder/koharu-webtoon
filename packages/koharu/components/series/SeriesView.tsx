@@ -2,12 +2,12 @@
 
 import {
   ArrowLeft,
+  ChevronDown,
   Download,
   FolderInput,
   LoaderCircle,
-  MoreHorizontal,
+  Play,
   Plus,
-  RefreshCw,
   Rows3,
   ScrollText,
   Trash2,
@@ -53,19 +53,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@koharu/ui/components/dropdown-menu'
+import { Input } from '@koharu/ui/components/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/popover'
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
 import { Switch } from '@koharu/ui/components/switch'
 
-/** The batch menu is a plain list of single stages, the same shape it had before. A shared
- *  picker component was tried here and earned nothing: the per-chapter control has its own one,
- *  and the two never had to look alike. */
-const PIPELINES: { id: string; operation: Operation }[] = [
-  { id: 'full', operation: { operation: 'full' } },
-  { id: 'detection', operation: { operation: 'only', stage: 'detection' } },
-  { id: 'ocr', operation: { operation: 'only', stage: 'ocr' } },
-  { id: 'translation', operation: { operation: 'only', stage: 'translation' } },
-  { id: 'inpainting', operation: { operation: 'only', stage: 'inpainting' } },
+/** What a range run can apply: the whole pipeline, or a single stage repeated across every chapter in
+ *  the range. A plain list of single stages, the same shape it had before. A shared picker component
+ *  was tried here and earned nothing: the per-chapter control has its own one, and the two never had
+ *  to look alike. */
+const PIPELINES: { label: string; operation: Operation }[] = [
+  { label: 'series.pipeline.full', operation: { operation: 'full' } },
+  { label: 'phase.detection', operation: { operation: 'only', stage: 'detection' } },
+  { label: 'phase.ocr', operation: { operation: 'only', stage: 'ocr' } },
+  { label: 'phase.translation', operation: { operation: 'only', stage: 'translation' } },
+  { label: 'phase.inpainting', operation: { operation: 'only', stage: 'inpainting' } },
 ]
 
 export function SeriesView({ id }: { id: string }) {
@@ -99,9 +101,9 @@ export function SeriesView({ id }: { id: string }) {
 
   // Injection is truncated silently on the backend, so the batch reports what actually reached
   // the prompt. Without that the user has no way to tell why the result keeps changing.
-  const start = (operation: Operation) => {
+  const start = (projects: string[], operation: Operation) => {
     setRun(null)
-    void processChapters({ projects: targets, operation })
+    void processChapters({ projects, operation })
       .then((result) => setRun(result))
       .catch(() => undefined)
   }
@@ -170,44 +172,57 @@ export function SeriesView({ id }: { id: string }) {
       )}
 
       {chapters.length > 0 && (
-        <div className='flex items-center gap-2 border-b border-border/40 px-4 py-1.5'>
-          <label className='flex items-center gap-1.5 text-[10px] text-muted-foreground'>
-            <input
-              type='checkbox'
-              checked={targets.length === chapters.length}
-              onChange={(event) =>
-                setSelected(event.target.checked ? chapters.map((chapter) => chapter.project) : [])
-              }
+        <>
+          <div className='border-b border-border/40 px-4 py-1.5'>
+            <ProcessRange
+              chapters={chapters}
+              busy={busy}
+              running={processing}
+              onRun={start}
             />
-            {t('series.selectAll')}
-          </label>
-          {chosen.length > 0 && (
-            <>
-              <span className='text-[10px] text-muted-foreground'>
-                {t('series.selectedCount', { count: chosen.length })}
-              </span>
-              <DeleteChaptersDialog
-                chapters={chosen}
-                trigger={
-                  <Button
-                    type='button'
-                    size='sm'
-                    variant='ghost'
-                    disabled={busy}
-                    className='ml-auto h-6 gap-1 text-[10px] text-destructive hover:bg-destructive/10 hover:text-destructive'
-                  >
-                    <Trash2 className='size-3' />
-                    {t('series.deleteSelected', { count: chosen.length })}
-                  </Button>
+          </div>
+
+          <div className='flex items-center gap-2 border-b border-border/40 px-4 py-1.5'>
+            <label className='flex items-center gap-1.5 text-[10px] text-muted-foreground'>
+              <input
+                type='checkbox'
+                checked={targets.length === chapters.length}
+                onChange={(event) =>
+                  setSelected(
+                    event.target.checked ? chapters.map((chapter) => chapter.project) : [],
+                  )
                 }
-                onConfirm={async (projects) => {
-                  for (const project of projects) await deleteChapter(project)
-                  setSelected([])
-                }}
               />
-            </>
-          )}
-        </div>
+              {t('series.selectAll')}
+            </label>
+            {chosen.length > 0 && (
+              <>
+                <span className='text-[10px] text-muted-foreground'>
+                  {t('series.selectedCount', { count: chosen.length })}
+                </span>
+                <DeleteChaptersDialog
+                  chapters={chosen}
+                  trigger={
+                    <Button
+                      type='button'
+                      size='sm'
+                      variant='ghost'
+                      disabled={busy}
+                      className='ml-auto h-6 gap-1 text-[10px] text-destructive hover:bg-destructive/10 hover:text-destructive'
+                    >
+                      <Trash2 className='size-3' />
+                      {t('series.deleteSelected', { count: chosen.length })}
+                    </Button>
+                  }
+                  onConfirm={async (projects) => {
+                    for (const project of projects) await deleteChapter(project)
+                    setSelected([])
+                  }}
+                />
+              </>
+            )}
+          </div>
+        </>
       )}
 
       <ScrollArea className='min-h-0 flex-1' viewportClassName='p-4'>
@@ -246,6 +261,111 @@ export function SeriesView({ id }: { id: string }) {
           )}
         </div>
       </ScrollArea>
+    </div>
+  )
+}
+
+/** Runs one operation over a run of chapters, addressed the way the list shows them: `#4` through
+ *  `#12`, with either end left open.
+ *
+ *  The backend takes project names and the index is already loaded here, so the range resolves against
+ *  that list rather than teaching the command a second way to name the same chapters. A deleted
+ *  chapter leaves its number free instead of shifting the rest, so a range skips those gaps rather than
+ *  quietly running a different set than the numbers suggest. An empty end number means the single
+ *  chapter the start names, which is the common "just this one" case.
+ */
+function ProcessRange({
+  chapters,
+  busy,
+  running,
+  onRun,
+}: {
+  chapters: { seq: number; project: string }[]
+  busy: boolean
+  running: boolean
+  onRun: (projects: string[], operation: Operation) => void
+}) {
+  const { t } = useTranslation()
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+
+  const range = useMemo(() => {
+    const start = Number.parseInt(from, 10)
+    if (!Number.isFinite(start)) return null
+    const end = to.trim() === '' ? start : Number.parseInt(to, 10)
+    if (!Number.isFinite(end)) return null
+    return { low: Math.min(start, end), high: Math.max(start, end) }
+  }, [from, to])
+
+  const projects = useMemo(() => {
+    if (!range) return []
+    return chapters
+      .filter((chapter) => chapter.seq >= range.low && chapter.seq <= range.high)
+      .map((chapter) => chapter.project)
+  }, [chapters, range])
+
+  const status = !range
+    ? t('series.range.hint')
+    : projects.length === 0
+      ? t('series.range.empty')
+      : t('series.range.count', { count: projects.length })
+
+  const field = (value: string, onChange: (next: string) => void, label: string) => (
+    <Input
+      type='number'
+      min={1}
+      step={1}
+      inputMode='numeric'
+      value={value}
+      disabled={busy}
+      placeholder='#'
+      aria-label={label}
+      className='h-6 w-14 shrink-0 text-[10px] tabular-nums'
+      onChange={(event) => onChange(event.currentTarget.value)}
+    />
+  )
+
+  return (
+    <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+      {field(from, setFrom, t('series.range.from'))}
+      <span className='text-[10px] text-muted-foreground'>–</span>
+      {field(to, setTo, t('series.range.to'))}
+      <span className='text-[10px] text-muted-foreground'>{status}</span>
+
+      <div className='ml-auto'>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={busy || projects.length === 0}
+            render={
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                aria-busy={running}
+                className='h-7 gap-1.5 text-[10px]'
+              />
+            }
+          >
+            {running ? (
+              <LoaderCircle className='size-3 animate-spin' />
+            ) : (
+              <Play className='size-3' />
+            )}
+            {t('series.processRun')}
+            <ChevronDown className='size-3 opacity-60' />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end'>
+            {PIPELINES.map((pipeline) => (
+              <DropdownMenuItem
+                key={pipeline.label}
+                onClick={() => onRun(projects, pipeline.operation)}
+              >
+                {t(pipeline.label)}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   )
 }
@@ -539,68 +659,11 @@ function DeleteChaptersDialog({
   )
 }
 
-/** The series-level operations: where the source folder points, and removing the whole series. */
 /** The one series-level action left: removing the whole series.
  *
  *  Its own trigger rather than an overflow menu item, because a menu item closes the menu on click and
  *  the confirmation would race it. */
 function DeleteSeriesButton({ busy, onConfirm }: { busy: boolean; onConfirm: () => void }) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const [working, setWorking] = useState(false)
-
-  const confirm = () => {
-    setWorking(true)
-    try {
-      onConfirm()
-      setOpen(false)
-    } finally {
-      setWorking(false)
-    }
-  }
-
-  return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
-      <AlertDialogTrigger
-        render={
-          <Button
-            type='button'
-            size='icon-sm'
-            variant='ghost'
-            disabled={busy}
-            aria-label={t('series.deleteSeries')}
-            className='size-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
-          />
-        }
-      >
-        <Trash2 className='size-4' />
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('series.deleteSeriesTitle')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('series.deleteSeriesDescription')}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={working}>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction
-            disabled={working}
-            onClick={(event) => {
-              event.preventDefault()
-              confirm()
-            }}
-          >
-            {working && <LoaderCircle className='size-3 animate-spin' />}
-            {t('series.deleteSeriesConfirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-/** Removing a series takes its chapters and their translations with it, and none of that can be
- *  rebuilt from the source folder. It therefore gets its own trigger rather than living inside the
- *  overflow menu: a menu item closes the menu on click, so the confirmation would race it. */
-function DeleteSeriesDialog({ busy, onConfirm }: { busy: boolean; onConfirm: () => void }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [working, setWorking] = useState(false)

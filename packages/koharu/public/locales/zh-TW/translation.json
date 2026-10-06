@@ -552,6 +552,13 @@
     },
     "process": "處理",
     "processRun": "開始處理",
+    "range": {
+      "count": "將處理 {{count}} 章",
+      "empty": "這個區間裡沒有章節。",
+      "from": "起始章節號",
+      "hint": "結束留空則只處理起始的那一章。",
+      "to": "結束章節號"
+    },
     "deleteChapter": "刪除 {{name}}",
     "deleteChapterTitle": "刪除「{{name}}」？",
     "deleteChapterDescription": "這一章的譯文與匯出檔案會被永久刪除。序號會空出來，重新匯入同一話會拿回原來的位置，上文也就仍然來自它前面那一章。",

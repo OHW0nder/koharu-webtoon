@@ -552,6 +552,13 @@
     },
     "process": "Process",
     "processRun": "Run",
+    "range": {
+      "count": "Runs {{count}} chapters",
+      "empty": "No chapter carries that number.",
+      "from": "First chapter number",
+      "hint": "Leave the end empty to run only the chapter the start names.",
+      "to": "Last chapter number"
+    },
     "deleteChapter": "Delete {{name}}",
     "deleteChapterTitle": "Delete “{{name}}”?",
     "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
