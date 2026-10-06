@@ -11,6 +11,7 @@ import {
   useSaveSeriesSettings,
   useSeriesSettings,
 } from '@/lib/queries'
+import { useKoharuStore } from '@/lib/store'
 import type {
   AdBands,
   Glossary,
@@ -45,15 +46,21 @@ const GLOSSARY_KINDS: GlossaryKind[] = [
  *  is armed and the editor waits for the next edit. Without that, a failure the user cannot fix
  *  from the keyboard — a duplicated term, say — would retry on every render.
  *
+ *  `enabled` is what the caller uses to hold the write off while the backend would reject it. It
+ *  disarms the timer and silences the unmount flush, so leaving the page mid-lock cannot smuggle a
+ *  rejected write out either.
+ *
  *  The effect depends on the serialized string rather than the object so that an unrelated
  *  re-render cannot restart the timer and starve the save. */
 function useDebouncedSave<T>({
   value,
   saving,
+  enabled,
   submit,
 }: {
   value: T | null
   saving: boolean
+  enabled: boolean
   submit: (value: T) => Promise<unknown>
 }) {
   const encoded = useMemo(() => (value === null ? null : JSON.stringify(value)), [value])
@@ -67,8 +74,11 @@ function useDebouncedSave<T>({
   // Read through a ref so the unmount flush sees the current state rather than the first render's.
   const writing = useRef(saving)
   writing.current = saving
+  const writable = useRef(enabled)
+  writable.current = enabled
 
   const armed =
+    enabled &&
     encoded !== null &&
     baseline.current !== null &&
     encoded !== baseline.current &&
@@ -98,7 +108,7 @@ function useDebouncedSave<T>({
     () => () => {
       clearTimeout(timer.current)
       const pending = latest.current
-      if (pending === null || writing.current) return
+      if (!writable.current || pending === null || writing.current) return
       const encoded = JSON.stringify(pending)
       if (encoded === baseline.current || encoded === submitted.current) return
       submitted.current = encoded
@@ -130,6 +140,11 @@ export function SeriesSettings({
   const { t } = useTranslation()
   const settings = useSeriesSettings(id)
   const { saveSettings, savingSettings } = useSaveSeriesSettings(id)
+  const jobs = useKoharuStore((state) => state.jobs)
+  // These writes are rejected while a job runs: the batch already snapshotted the series assets, so
+  // a change now would not reach the running batch but would leave the interface describing a run
+  // that is not happening.
+  const running = Object.values(jobs).some((job) => job.state === 'running')
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const seeded = useRef(false)
 
@@ -143,6 +158,7 @@ export function SeriesSettings({
   const { seed } = useDebouncedSave<SettingsDraft>({
     value: draft,
     saving: savingSettings,
+    enabled: !running,
     submit: saveSettings,
   })
   useEffect(() => {
@@ -160,12 +176,13 @@ export function SeriesSettings({
         <p className='text-[10px] leading-4 text-muted-foreground'>
           {t('series.settings.description')}
         </p>
+        {running && <p className='text-[10px] text-muted-foreground'>{t('settings.busy')}</p>}
       </header>
 
       {!draft ? (
         <p className='text-[10px] text-muted-foreground'>{t('common.loading')}</p>
       ) : (
-        <>
+        <fieldset disabled={running} className='m-0 grid gap-3 border-0 p-0 disabled:opacity-60'>
           <div className='grid gap-4 md:grid-cols-2'>
             <div className='grid content-start gap-2'>
               <h3 className='text-[11px] font-medium'>{t('series.ad.label')}</h3>
@@ -229,8 +246,8 @@ export function SeriesSettings({
             </p>
           </div>
 
-          <GlossaryPanel id={id} />
-        </>
+          <GlossaryPanel id={id} running={running} />
+        </fieldset>
       )}
     </section>
   )
@@ -262,7 +279,7 @@ function toPageCount(raw: string): number {
 
 type SettingsDraft = { ad: AdBands; guidance: string; context_pages: number }
 
-function GlossaryPanel({ id }: { id: string }) {
+function GlossaryPanel({ id, running }: { id: string; running: boolean }) {
   const { t } = useTranslation()
   const glossary = useGlossary(id)
   const { saveGlossary, savingGlossary } = useSaveGlossary(id)
@@ -285,6 +302,7 @@ function GlossaryPanel({ id }: { id: string }) {
   const { seed } = useDebouncedSave<Glossary>({
     value: payload,
     saving: savingGlossary,
+    enabled: !running,
     submit: async (glossary) => {
       setFailure(null)
       try {

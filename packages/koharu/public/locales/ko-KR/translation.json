@@ -360,6 +360,7 @@
       "title": "모양"
     },
     "backToEditor": "편집기로 돌아가기",
+    "busy": "처리 중이므로 지금은 이 설정을 바꿀 수 없습니다. 변경은 다음 실행에 적용됩니다.",
     "generation": {
       "description": "언어 모델이 번역문을 생성하는 방식을 조정합니다.",
       "enableReasoning": "추론 활성화",

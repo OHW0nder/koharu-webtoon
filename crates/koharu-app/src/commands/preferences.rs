@@ -7,10 +7,10 @@ use koharu_secrets::ExposeSecret as _;
 use koharu_translator::{Language, Model, Provider, ProviderConfig, ProvidersConfig};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager as _};
+use tauri::{AppHandle, Manager as _, State};
 use tauri_runtime_cef::CefRuntime;
 
-use super::Error;
+use super::{Error, Processing, reject_settings_while_processing};
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct Preferences {
@@ -163,7 +163,10 @@ pub(crate) async fn save_preferences(
     mut pipeline: PipelineConfig,
     providers: ProviderPreferences,
     typesetting: TypesettingConfig,
+    processing: State<'_, Processing>,
 ) -> std::result::Result<Preferences, Error> {
+    // 必须在碰凭据之前就拒绝：这个函数是整体替换管线配置，跑着的作业读的就是那份内存句柄。
+    reject_settings_while_processing(&processing)?;
     remember_pipeline_profiles(&mut pipeline);
     let providers = providers.into_config()?;
     let pipeline_config = PipelineConfig::load()?;

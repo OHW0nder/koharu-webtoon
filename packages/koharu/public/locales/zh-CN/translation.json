@@ -360,6 +360,7 @@
       "title": "外观"
     },
     "backToEditor": "返回编辑器",
+    "busy": "正在处理，暂时无法修改这些设置，改动会在下一次运行时生效。",
     "generation": {
       "description": "微调语言模型生成译文的方式。",
       "enableReasoning": "启用推理",

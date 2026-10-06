@@ -360,6 +360,7 @@
       "title": "Aparência"
     },
     "backToEditor": "Voltar ao editor",
+    "busy": "Um processamento está em andamento, então estas configurações não podem ser alteradas agora. Elas valem para a próxima execução.",
     "generation": {
       "description": "Ajuste como os modelos de linguagem geram o texto traduzido.",
       "enableReasoning": "Ativar raciocínio",

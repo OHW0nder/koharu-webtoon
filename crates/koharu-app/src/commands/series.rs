@@ -29,7 +29,7 @@ use super::{
     output::{ExportFormat, export_snapshot},
     processing::{JobChannel, JobId, JobState, Processing, process},
     project::{CurrentProject, ProjectLibrary},
-    reject_import_while_processing,
+    reject_import_while_processing, reject_settings_while_processing,
 };
 use crate::injection::{self, Injection};
 
@@ -99,7 +99,9 @@ pub(crate) fn set_series_settings(
     id: String,
     settings: SeriesSettings,
     library: State<'_, SeriesLibrary>,
+    processing: State<'_, Processing>,
 ) -> std::result::Result<SeriesSettings, Error> {
+    reject_settings_while_processing(&processing)?;
     let mut series = library.read(&id)?;
     series.settings = settings;
     library.write(&series)?;
@@ -148,7 +150,9 @@ pub(crate) fn set_glossary(
     id: String,
     glossary: Glossary,
     library: State<'_, SeriesLibrary>,
+    processing: State<'_, Processing>,
 ) -> std::result::Result<Glossary, Error> {
+    reject_settings_while_processing(&processing)?;
     validate_glossary(&glossary)
         .with_context(|| format!("the glossary of series {id:?} cannot be saved"))?;
     let directory = library.path(&id);

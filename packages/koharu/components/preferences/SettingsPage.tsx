@@ -61,6 +61,11 @@ export function SettingsPage() {
   const setOpen = useKoharuStore((state) => state.setSettingsOpen)
   const preferences = useKoharuStore((state) => state.preferences)
   const translationModels = useKoharuStore((state) => state.translationModels)
+  const jobs = useKoharuStore((state) => state.jobs)
+  // The backend rejects these writes while a job runs, because `save_preferences` replaces the very
+  // configuration the job reads. Locking the controls is what keeps the debounced auto-save from
+  // firing into that rejection on every keystroke.
+  const running = Object.values(jobs).some((job) => job.state === 'running')
   const [tab, setTab] = useState<Tab>('appearance')
   const [pipeline, setPipeline] = useState<PipelineConfig | null>(preferences?.pipeline ?? null)
   const [providers, setProviders] = useState<ProviderSettings | null>(
@@ -142,14 +147,14 @@ export function SettingsPage() {
   }, [open, preferences])
 
   useEffect(() => {
-    if (!open || !pipeline || !providers || !typesetting) return
+    if (!open || running || !pipeline || !providers || !typesetting) return
     const serialized = JSON.stringify([pipeline, providers, typesetting])
     if (serialized === lastSaved.current) return
     const timeout = window.setTimeout(() => {
       void saveDraft(pipeline, providers, typesetting).catch(() => undefined)
     }, 260)
     return () => window.clearTimeout(timeout)
-  }, [open, pipeline, providers, saveDraft, typesetting])
+  }, [open, pipeline, providers, running, saveDraft, typesetting])
 
   if (!open) return null
 
@@ -161,7 +166,7 @@ export function SettingsPage() {
           variant='ghost'
           className='mb-5 h-9 justify-start gap-2 rounded-lg px-2 text-[12px] text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground'
           onClick={() => {
-            if (!pipeline || !providers || !typesetting) {
+            if (running || !pipeline || !providers || !typesetting) {
               setOpen(false)
               return
             }
@@ -197,39 +202,58 @@ export function SettingsPage() {
         </header>
         <ScrollArea className='min-h-0 flex-1'>
           <div className='mx-auto w-full max-w-4xl px-10 py-10'>
+            {/* Appearance and shortcuts never reach `save_preferences`, so they stay live while a job
+                runs. The other four all funnel into it, so one fieldset covers them all. */}
+            {(tab === 'pipeline' ||
+              tab === 'providers' ||
+              tab === 'translation' ||
+              tab === 'typesetting') && (
+              <>
+                {running && (
+                  <p className='mb-4 text-[10px] text-muted-foreground'>{t('settings.busy')}</p>
+                )}
+                <fieldset
+                  disabled={running}
+                  className='m-0 min-w-0 border-0 p-0 disabled:opacity-60'
+                >
+                  {tab === 'pipeline' &&
+                    (pipeline ? (
+                      <PipelinePreferences value={pipeline} onChange={setPipeline} />
+                    ) : (
+                      <LoadingPreferences />
+                    ))}
+                  {tab === 'providers' &&
+                    (providers ? (
+                      <ProviderPreferences value={providers} onChange={setProviders} />
+                    ) : (
+                      <LoadingPreferences />
+                    ))}
+                  {tab === 'translation' &&
+                    (translation ? (
+                      <TranslationPreferences
+                        value={translation}
+                        modelChoices={translationModels}
+                        providers={providers?.entries ?? []}
+                        languages={preferences?.languages ?? []}
+                        onChange={(translation) =>
+                          setPipeline((current) =>
+                            current ? { ...current, translation } : current,
+                          )
+                        }
+                      />
+                    ) : (
+                      <LoadingPreferences />
+                    ))}
+                  {tab === 'typesetting' &&
+                    (typesetting ? (
+                      <TypesettingPreferences value={typesetting} onChange={setTypesetting} />
+                    ) : (
+                      <LoadingPreferences />
+                    ))}
+                </fieldset>
+              </>
+            )}
             {tab === 'appearance' && <AppearancePreferences />}
-            {tab === 'pipeline' &&
-              (pipeline ? (
-                <PipelinePreferences value={pipeline} onChange={setPipeline} />
-              ) : (
-                <LoadingPreferences />
-              ))}
-            {tab === 'providers' &&
-              (providers ? (
-                <ProviderPreferences value={providers} onChange={setProviders} />
-              ) : (
-                <LoadingPreferences />
-              ))}
-            {tab === 'translation' &&
-              (translation ? (
-                <TranslationPreferences
-                  value={translation}
-                  modelChoices={translationModels}
-                  providers={providers?.entries ?? []}
-                  languages={preferences?.languages ?? []}
-                  onChange={(translation) =>
-                    setPipeline((current) => (current ? { ...current, translation } : current))
-                  }
-                />
-              ) : (
-                <LoadingPreferences />
-              ))}
-            {tab === 'typesetting' &&
-              (typesetting ? (
-                <TypesettingPreferences value={typesetting} onChange={setTypesetting} />
-              ) : (
-                <LoadingPreferences />
-              ))}
             {tab === 'shortcuts' && <ShortcutPreferences />}
           </div>
         </ScrollArea>

@@ -360,6 +360,7 @@
       "title": "Appearance"
     },
     "backToEditor": "Back to editor",
+    "busy": "A processing job is running, so these settings cannot be changed right now. They apply to the next run.",
     "generation": {
       "description": "Fine-tune how language models generate translated text.",
       "enableReasoning": "Enable reasoning",

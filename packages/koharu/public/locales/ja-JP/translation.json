@@ -360,6 +360,7 @@
       "title": "外観"
     },
     "backToEditor": "エディターに戻る",
+    "busy": "処理中のため、いまはこれらの設定を変更できません。変更は次の実行に適用されます。",
     "generation": {
       "description": "言語モデルによる翻訳文の生成方法を調整します。",
       "enableReasoning": "推論を有効化",

@@ -66,6 +66,16 @@ pub(crate) struct Processing {
     pub(crate) inpainting_mask: Mutex<Option<koharu_pipeline::InpaintingMask>>,
 }
 
+impl Processing {
+    /// 有没有作业正在跑。
+    ///
+    /// 判据是 `stops` 而不是 `jobs`：作业登记时插入 `stops`、结束时移除，而 `jobs` 会把终态一直留着，
+    /// 直到换项目或关窗口才清。用 `jobs` 判会读到早已结束的历史。
+    pub(crate) fn is_running(&self) -> bool {
+        !self.stops.lock().is_empty()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct JobChannel {
     pub(crate) channel: Mutex<Option<Channel<Job>>>,

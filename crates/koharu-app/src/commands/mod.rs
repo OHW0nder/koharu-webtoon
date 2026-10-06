@@ -50,10 +50,26 @@ pub(crate) trait ChannelExt<T> {
 pub(crate) fn reject_import_while_processing(
     processing: &Processing,
 ) -> std::result::Result<(), Error> {
-    if processing.stops.lock().is_empty() {
-        Ok(())
-    } else {
+    if processing.is_running() {
         Err(anyhow::anyhow!("pages cannot be imported while processing is running").into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Rejects a settings write while a processing job is running.
+///
+/// **不是「改了不生效」而是「会把正在跑的东西改坏」。** 跑着的作业读的是管线那份内存配置，而
+/// [`preferences::save_preferences`] 是整体替换：它会把批量循环刚装进去的附加说明与上文窗口一起覆盖掉，
+/// 于是本章之后每一章都静默地按用户设置跑，批完之后界面看着像生效了，实际没有。漫画级资料在批量开始
+/// 时已快照，中途改不会影响这一批，但会让界面与正在跑的内容对不上，所以一并挡住。
+pub(crate) fn reject_settings_while_processing(
+    processing: &Processing,
+) -> std::result::Result<(), Error> {
+    if processing.is_running() {
+        Err(anyhow::anyhow!("settings cannot be changed while processing is running").into())
+    } else {
+        Ok(())
     }
 }
 

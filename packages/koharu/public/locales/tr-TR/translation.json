@@ -360,6 +360,7 @@
       "title": "Görünüm"
     },
     "backToEditor": "Düzenleyiciye dön",
+    "busy": "Bir işlem sürüyor, bu yüzden bu ayarlar şu anda değiştirilemez. Bir sonraki çalıştırmada geçerli olurlar.",
     "generation": {
       "description": "Dil modellerinin çevrilmiş metni nasıl ürettiğini ayarlayın.",
       "enableReasoning": "Akıl yürütmeyi etkinleştir",

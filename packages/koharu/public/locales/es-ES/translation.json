@@ -360,6 +360,7 @@
       "title": "Apariencia"
     },
     "backToEditor": "Volver al editor",
+    "busy": "Hay un proceso en curso, así que ahora no se pueden cambiar estos ajustes. Se aplicarán en la próxima ejecución.",
     "generation": {
       "description": "Ajusta cómo los modelos de lenguaje generan el texto traducido.",
       "enableReasoning": "Activar razonamiento",
