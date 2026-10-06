@@ -10,7 +10,13 @@ use tauri::{AppHandle, Manager as _, State, ipc::Channel};
 use tauri_runtime_cef::CefRuntime;
 use uuid::Uuid;
 
-use super::{ChannelExt as _, Error, canvas::CanvasChannel, project::CurrentProject};
+use super::{
+    ChannelExt as _, Error,
+    canvas::CanvasChannel,
+    project::{CurrentProject, ProjectLibrary},
+    series::SeriesLibrary,
+};
+use crate::injection;
 use koharu_desktop::Desktop;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Type)]
@@ -81,24 +87,59 @@ pub(crate) struct JobChannel {
     pub(crate) channel: Mutex<Option<Channel<Job>>>,
 }
 
+/// 这一次运行用哪一部漫画的资料。
+pub(crate) enum Subject {
+    /// 当前打开的项目。漫画归属要反查才知道；不是任何漫画的章，就只跑用户自己的全局指导。
+    CurrentProject,
+    /// 调用方已经算好的某章资料。批量在批首扫完整部漫画，逐章切换，走这条。
+    ThisChapter(injection::Prepared),
+}
+
+/// Runs the pipeline over the open project and returns as soon as the job is registered.
+///
+/// 漫画资料在这一层算，不在批量那一层：单独打开一章跑和在同一批里跑这一章，必须拿到同一段提示词，
+/// 否则「跑批」和「补跑一章」会译出两种结果，而用户看不出区别。
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn process(
     handle: AppHandle<CefRuntime>,
     scope: koharu_pipeline::Scope,
     operation: koharu_pipeline::Operation,
-    project: State<'_, CurrentProject>,
     processing: State<'_, Processing>,
     job_channel: State<'_, JobChannel>,
 ) -> std::result::Result<JobId, Error> {
-    let snapshot = project
-        .project
-        .lock()
-        .await
-        .as_ref()
-        .context("no project is open")?
-        .snapshot();
+    start_job(
+        handle,
+        scope,
+        operation,
+        processing,
+        job_channel,
+        Subject::CurrentProject,
+    )
+    .await
+}
+
+/// 注册并启动一次作业，跑完后把漫画资料从管线配置里还原。
+///
+/// 资料必须在作业登记之后才算：算资料要读盘、可能失败，而登记过却没有作业在跑会把这个槽位永久占住。
+/// 失败时把槽位还回去，否则这一次点运行就能让后面每一次都撞上「已有作业在跑」。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_job(
+    handle: AppHandle<CefRuntime>,
+    scope: koharu_pipeline::Scope,
+    operation: koharu_pipeline::Operation,
+    processing: State<'_, Processing>,
+    job_channel: State<'_, JobChannel>,
+    subject: Subject,
+) -> std::result::Result<JobId, Error> {
+    // 名字与场景必须同一次加锁取出来：名字要拿去反查漫画归属，场景是这一次真正处理的，两者错配就会
+    // 把一部漫画的资料算到另一章上。
+    let (name, snapshot) = {
+        let current = handle.state::<CurrentProject>();
+        let project = current.project.lock().await;
+        let project = project.as_ref().context("no project is open")?;
+        (project.name.clone(), project.snapshot())
+    };
     let id = JobId::new();
     let stop = StopToken::default();
     {
@@ -108,6 +149,20 @@ pub(crate) async fn process(
         }
         stops.insert(id, stop.clone());
     }
+    let prepared = match prepare(&handle, &name, subject).await {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            processing.stops.lock().remove(&id);
+            return Err(error.into());
+        }
+    };
+    if let Some(prepared) = &prepared
+        && let Err(error) = prepared.apply(&handle)
+    {
+        processing.stops.lock().remove(&id);
+        return Err(error.into());
+    }
+    let restore = prepared.is_some();
     let job = Job {
         id,
         state: JobState::Running,
@@ -246,6 +301,13 @@ pub(crate) async fn process(
             handle: task_handle.clone(),
         };
         let result = pipeline.execute(snapshot, request, &mut committer).await;
+        // 还原在成功与失败之后都要做，而且要早于作业转入终态：句柄是全局的，残留的漫画资料会漏进设置页，
+        // 也会被下一次运行当成用户自己的设置读走。
+        if restore {
+            if let Err(error) = injection::restore(&task_handle) {
+                tracing::error!(%error, "failed to restore the pipeline configuration");
+            }
+        }
         let (stopped, error) = match result {
             Ok(report) => (report.status == RunStatus::Stopped, None),
             Err(error) => {
@@ -286,6 +348,38 @@ pub(crate) async fn process(
         }
     }));
     Ok(id)
+}
+
+/// 这一次运行该注入什么。
+///
+/// 批量已经把整部漫画扫完并且知道自己在跑哪一章，所以直接用调用方给的。单章运行只有项目名，先反查它
+/// 属于哪部漫画；查不到就只跑用户自己的全局指导，那条路径没有任何漫画资料。
+async fn prepare(
+    handle: &AppHandle<CefRuntime>,
+    project: &str,
+    subject: Subject,
+) -> Result<Option<injection::Prepared>> {
+    let prepared = match subject {
+        Subject::ThisChapter(prepared) => Some(prepared),
+        Subject::CurrentProject => chapter_subject(handle, project).await?,
+    };
+    Ok(prepared)
+}
+
+/// 单章运行的资料：反查这个项目属于哪部漫画，是就算出这一次的。查不到就只跑用户自己的全局指导。
+async fn chapter_subject(
+    handle: &AppHandle<CefRuntime>,
+    project: &str,
+) -> Result<Option<injection::Prepared>> {
+    let library = handle.state::<SeriesLibrary>().inner().clone();
+    let Some(series) = library.owning_series(project)? else {
+        return Ok(None);
+    };
+    // 与跑批同一趟预扫描：整部漫画的原文决定术语命中哪一批词条，所以命中结果不随运行方式变化。
+    let projects = handle.state::<ProjectLibrary>().inner().clone();
+    let assets = injection::Assets::collect(&library, &series, &projects).await?;
+    let baseline = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
+    injection::Prepared::for_chapter(&assets, project, &baseline).map(Some)
 }
 
 #[tracing::instrument(

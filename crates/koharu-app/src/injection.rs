@@ -19,14 +19,29 @@
 //! **服务商能力判断落在这里。** 作用域管线在构造之前已经读到了当前配置，其中的模型选择包含服务商，
 //! 所以渲染期即可判断，零流水线改动（`koharu-glossary-design.md` §5）。不支持提示词的服务商会静默丢弃
 //! 全部注入内容，所以必须在注入前关掉，并把这个事实报给界面。
+//!
+//! **谁在什么时候注入。** 一部漫画加一个项目名决定一次运行的全部资料：跑批逐章换，单章运行算一次，两条
+//! 路径因此拿到逐字节相同的提示词。资料写进管线跑的那份内存配置，跑完 [`restore`] 还原——句柄是全局的，
+//! 残留的漫画资料会漏进设置页与下一次运行。
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context as _, Result};
 use koharu_scene::Snapshot;
 use koharu_translator::TranslationContext;
+use tauri::{AppHandle, Manager as _};
+use tauri_runtime_cef::CefRuntime;
 
-use crate::{commands::series::Glossary, glossary};
+use crate::{
+    commands::{
+        project::ProjectLibrary,
+        series::{Glossary, Series, SeriesLibrary},
+    },
+    glossary,
+};
 
 /// 上文旁挂文件的前缀。文件名为 `context-<章序号>.json`，与漫画索引同目录。
 const CONTEXT_FILE_PREFIX: &str = "context-";
@@ -131,10 +146,170 @@ pub(crate) fn render(injection: &Injection, provider: koharu_translator::Provide
     }
 }
 
+/// 一部漫画的翻译资料，按运行开始前的状态一次性备好。
+///
+/// **预扫描是必需的，不是优化。** 术语命中要看整部漫画的原文，而内核同一时刻只有一个活动项目，所以
+/// 「拿到全部原文」只能靠运行开始前逐章打开一次；上一章的基线也出自同一趟。两趟合一，每章两次打开，
+/// 与是否启用上文无关。跑批在批首扫一次，单章运行开跑前扫一次，所以同一章无论走哪条路，命中的是同一
+/// 批词条。
+pub(crate) struct Assets {
+    /// 漫画目录，上文旁挂文件与它同级。
+    pub(crate) directory: PathBuf,
+    /// 用户手写的指导。
+    guidance: String,
+    glossary: Glossary,
+    /// 整部漫画的原文，供术语命中判定。
+    haystack: String,
+    /// 上文窗口的页数：章内与章外取的都是「最近若干页」，用户只调一个旋钮。
+    pub(crate) context_pages: u32,
+    /// 章序号 → 章项目名，用来判「下一章」和读自己的上文。
+    order: Vec<(u32, String)>,
+}
+
+impl Assets {
+    /// 逐章打开一次，收集全部原文，并为每一章的下一章写下上文窗口的基线。
+    ///
+    /// 基线取自「磁盘上已有的译文」，所以中断之后重跑仍然拿得到上一章的写法。
+    pub(crate) async fn collect(
+        library: &SeriesLibrary,
+        series: &Series,
+        projects: &ProjectLibrary,
+    ) -> Result<Self> {
+        let directory = library.path(&series.id);
+        // 术语表坏了就报错，不静默当成空表：用户以为在生效的术语表不见了，比一次失败更难排查。
+        let glossary = glossary::load(&directory)?;
+        let mut assets = Self {
+            directory,
+            guidance: series.settings.guidance.clone(),
+            glossary,
+            haystack: String::new(),
+            context_pages: series.settings.context_pages,
+            order: series
+                .chapters
+                .iter()
+                .map(|chapter| (chapter.seq, chapter.project.clone()))
+                .collect(),
+        };
+        for chapter in &series.chapters {
+            // 还没建项目的章没有原文可读，跳过而不是替它造一份空的。
+            let Ok(opened) = projects.open(&chapter.project).await else {
+                continue;
+            };
+            let snapshot = opened.snapshot();
+            assets.haystack.push_str(&source_text(&snapshot)?);
+            let Some(next) = assets.successor(&chapter.project) else {
+                continue;
+            };
+            let context = prior_chapter_context(&snapshot, assets.context_pages);
+            save_prior_context(&assets.directory, next, &context)?;
+        }
+        Ok(assets)
+    }
+
+    /// 某章的下一章序号。序号是作品结构的客观顺序，与用户勾选和执行的顺序无关
+    /// （`docs/reference/koharu-glossary-design.md` §2.4）。
+    pub(crate) fn successor(&self, project: &str) -> Option<u32> {
+        let seq = self.seq(project).ok()?;
+        self.order
+            .iter()
+            .map(|(candidate, _)| *candidate)
+            .find(|candidate| *candidate > seq)
+    }
+
+    fn seq(&self, project: &str) -> Result<u32> {
+        self.order
+            .iter()
+            .find(|(_, candidate)| candidate == project)
+            .map(|(seq, _)| *seq)
+            .context("the chapter is not registered in this series")
+    }
+
+    /// 这一章的注入内容：只有人工资料。全局指导由 [`Prepared::for_chapter`] 补上，因为它是用户的而不是
+    /// 这部漫画的。
+    ///
+    /// 上文不在这里：它逐页变化，由翻译阶段就地取一个跨章连续的窗口，所以走配置而不是走渲染。
+    fn injection(&self) -> Injection {
+        Injection {
+            guidance: self.guidance.clone(),
+            glossary: self.glossary.clone(),
+            haystack: self.haystack.clone(),
+            global: None,
+            order: None,
+        }
+    }
+}
+
+/// 一次运行写进管线配置的资料。取得方式是 [`Prepared::for_chapter`]，用完由 [`restore`] 还原。
+pub(crate) struct Prepared {
+    text: String,
+    context_pages: u32,
+    prior: Vec<Vec<TranslationContext>>,
+    /// 术语表里出现在原文中的条数。
+    pub(crate) matched: u32,
+    /// 当前服务商不接受提示词，这一次的资料全部无效。
+    pub(crate) unsupported: bool,
+}
+
+impl Prepared {
+    /// 为一部漫画的某章备好资料。
+    ///
+    /// `baseline` 是用户的配置：全局指导与服务商都从那里取，所以漫画自己的资料与用户设置的先后顺序由
+    /// 渲染层决定，而「用户改了什么」不需要在这一层知道。
+    pub(crate) fn for_chapter(
+        assets: &Assets,
+        chapter: &str,
+        baseline: &koharu_pipeline::PipelineConfig,
+    ) -> Result<Self> {
+        let mut built = assets.injection();
+        built.global = baseline.translation.instructions.clone();
+        let rendered = render(&built, baseline.translation.model.provider);
+        Ok(Self {
+            text: rendered.text,
+            context_pages: assets.context_pages,
+            prior: load_prior_context(&assets.directory, assets.seq(chapter)?),
+            matched: rendered.matched as u32,
+            unsupported: rendered.unsupported,
+        })
+    }
+
+    /// 写进管线跑的那份配置。
+    ///
+    /// 写的是**配置**而不是换一条管线：换管线会连翻译器一起重建，本地模型的权重要重读一遍盘，而重建
+    /// 阶段运行器与翻译器共用同一个已加载模型。空串表示没有可注入的内容，于是这一次就用回用户自己的
+    /// 全局指导，而不是把字段清空。
+    pub(crate) fn apply(&self, handle: &AppHandle<CefRuntime>) -> Result<()> {
+        let live = handle.state::<koharu_config::Config<koharu_pipeline::PipelineConfig>>();
+        {
+            let mut current = live.write()?;
+            current.translation.instructions =
+                (!self.text.is_empty()).then(|| self.text.clone());
+            // 窗口的页数与章外那一段都是运行参数而不是资料：它们决定翻译阶段每次请求带多少先例，所以
+            // 与附加说明一起写进管线配置，由 `koharu-pipeline` 在每页上就地取一个跨章连续的窗口。
+            current.translation.context_pages = self.context_pages;
+            current.translation.prior_chapter_context = self.prior.clone();
+        }
+        handle.state::<koharu_pipeline::Pipeline>().refresh()
+    }
+}
+
+/// 把管线跑的那份配置恢复成用户设置。
+///
+/// 重新读一次而不是回滚到运行开始时的快照：运行期间用户改了设置的话，恢复成旧快照会把那次改动从管线里
+/// 抹掉，尽管它已经在文件里了。
+pub(crate) fn restore(handle: &AppHandle<CefRuntime>) -> Result<()> {
+    let user = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
+    let live = handle.state::<koharu_config::Config<koharu_pipeline::PipelineConfig>>();
+    {
+        let mut current = live.write()?;
+        *current = user;
+    }
+    handle.state::<koharu_pipeline::Pipeline>().refresh()
+}
+
 /// 待译内容里的全部原文，供术语命中判定。
 ///
 /// 是整部漫画而不是单页：逐页匹配会漏掉那些在这一页没出现、但在别页出现的词条
-/// （`koharu-glossary-design.md` §4.3）。因此这条要在批量开始前预扫描逐章收集一次。
+/// （`koharu-glossary-design.md` §4.3）。因此这条要在一次运行开始前预扫描逐章收集一次。
 pub(crate) fn source_text(snapshot: &Snapshot) -> Result<String> {
     let mut text = String::new();
     for page in snapshot.pages() {

@@ -27,11 +27,11 @@ use super::{
     import::{self, AdBandSkip, Format, Slicing},
     lifecycle::replace_project,
     output::{ExportFormat, export_snapshot},
-    processing::{JobChannel, JobId, JobState, Processing, process},
+    processing::{JobChannel, JobId, JobState, Processing, Subject, start_job},
     project::{CurrentProject, ProjectLibrary},
     reject_import_while_processing, reject_settings_while_processing,
 };
-use crate::injection::{self, Injection};
+use crate::injection;
 
 /// 索引文件名。
 const INDEX: &str = "series.json";
@@ -226,6 +226,18 @@ impl AdBands {
     /// 这次导入是否需要裁剪。
     pub(crate) fn is_empty(self) -> bool {
         self.head == 0 && self.tail == 0
+    }
+
+    /// 一批源图里第 `index` 张实际承担的那一端广告带，`last` 是这一批最后一张的下标。
+    ///
+    /// 站点广告长在整章的首图顶部与末图底部，中间的图两侧都是正文。给每张图都套上两条广告带会把首图
+    /// 的尾部和末图的头部这两段正文一起削掉，所以每张图只取自己那一端；只有单图的一批两端都落在它
+    /// 自己身上。
+    pub(crate) fn for_page(self, index: usize, last: usize) -> Self {
+        Self {
+            head: if index == 0 { self.head } else { 0 },
+            tail: if index == last { self.tail } else { 0 },
+        }
     }
 }
 
@@ -467,21 +479,40 @@ impl SeriesLibrary {
         }
     }
 
+    /// 根目录下的全部索引。
+    ///
+    /// 单部漫画的索引缺失或损坏时跳过它，而不是让整个列表查不出来：它仍然出现在漫画柜里，只是这一轮
+    /// 不参与。
+    fn indices(&self) -> Result<Vec<Series>> {
+        let entries =
+            fs::read_dir(&self.root).with_context(|| format!("failed to read {}", self.root.display()))?;
+        let mut found = Vec::new();
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let Some(id) = entry
+                .path()
+                .file_stem()
+                .and_then(|id| id.to_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            if let Ok(series) = self.read(&id) {
+                found.push(series);
+            }
+        }
+        Ok(found)
+    }
+
     /// 列出全部漫画，按目录最近修改时间倒序，与项目列表的排序保持一致。
     pub(crate) fn list(&self) -> Result<Vec<SeriesSummary>> {
-        let mut entries = fs::read_dir(&self.root)
-            .with_context(|| format!("failed to read {}", self.root.display()))?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .filter_map(|entry| {
-                let path = entry.path();
-                let id = path.file_stem()?.to_str()?.to_owned();
-                Some((path, id))
-            })
-            .filter(|(path, _)| path.join(INDEX).is_file())
-            .filter_map(|(path, id)| {
-                let touched = fs::metadata(path).ok()?.modified().ok()?;
-                let series = self.read(&id).ok()?;
+        let mut entries = self
+            .indices()?
+            .into_iter()
+            .filter_map(|series| {
+                let touched = fs::metadata(self.path(&series.id)).ok()?.modified().ok()?;
                 Some((touched, series))
             })
             .collect::<Vec<_>>();
@@ -497,26 +528,23 @@ impl SeriesLibrary {
     ///
     /// 章项目与漫画共用项目根目录、同一套 `.khrproj` 实体，分组与否只取决于索引里有没有它，
     /// 所以"未被认领"就是未分组项目的准确定义。
-    ///
-    /// 单部漫画的索引缺失或损坏时跳过它，而不是让整个项目列表查不出来：它仍然出现在漫画柜
-    /// 里，只是这一轮不参与过滤。
     pub(crate) fn claimed_projects(&self) -> Result<BTreeSet<String>> {
-        let mut claimed = BTreeSet::new();
-        let entries =
-            fs::read_dir(&self.root).with_context(|| format!("failed to read {}", self.root.display()))?;
-        for entry in entries.filter_map(|entry| entry.ok()) {
-            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
-            }
-            let Ok(contents) = fs::read_to_string(entry.path().join(INDEX)) else {
-                continue;
-            };
-            let Ok(series) = serde_json::from_str::<Series>(&contents) else {
-                continue;
-            };
-            claimed.extend(series.chapters.into_iter().map(|chapter| chapter.project));
-        }
-        Ok(claimed)
+        Ok(self
+            .indices()?
+            .into_iter()
+            .flat_map(|series| series.chapters.into_iter().map(|chapter| chapter.project))
+            .collect())
+    }
+
+    /// 反查这个项目属于哪部漫画。
+    ///
+    /// 章在索引里只记项目名，所以归属就是一次字符串匹配。没有被任何漫画认领的项目返回 `None`：那是一条
+    /// 独立的普通项目，本来就没有漫画资料。
+    pub(crate) fn owning_series(&self, project: &str) -> Result<Option<Series>> {
+        Ok(self
+            .indices()?
+            .into_iter()
+            .find(|series| series.chapters.iter().any(|chapter| chapter.project == project)))
     }
 
     /// 读一部漫画，章按序号排序。
@@ -553,7 +581,8 @@ impl SeriesLibrary {
         directory_name(title, |candidate| self.path(candidate).exists())
     }
 
-    fn path(&self, id: &str) -> PathBuf {
+    /// 漫画目录。注入层把资料与旁挂文件挂在它下面，所以那层拿目录而不是重新推一遍位置。
+    pub(crate) fn path(&self, id: &str) -> PathBuf {
         self.root.join(id)
     }
 }
@@ -990,8 +1019,8 @@ pub struct SeriesRun {
 /// its own, so an interrupted batch resumes by simply running the chapters that are still pending.
 ///
 /// **注入内容在每章开始前换一次。** 换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文
-/// 窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户
-/// 配置，漫画的资料不会漏进设置页。
+/// 窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。还原由 [`start_job`] 在每章跑完后
+/// 做，漫画的资料因此不会漏进设置页。
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn process_series_chapters(
@@ -1011,29 +1040,23 @@ pub(crate) async fn process_series_chapters(
         }
     }
 
-    let assets = SeriesAssets::collect(&library, &series, &project_library).await?;
+    let assets = injection::Assets::collect(&library, &series, &project_library).await?;
     let baseline = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
     let mut report = SeriesRun::default();
     for (index, chapter) in projects.iter().enumerate() {
         let opened = project_library.open(chapter).await?;
         replace_project(&handle, opened).await?;
-        let prior = injection::load_prior_context(&assets.directory, assets.seq(chapter)?);
-        let mut built = assets.injection();
-        built.global = baseline.translation.instructions.clone();
-        let rendered = injection::render(&built, baseline.translation.model.provider);
-        // 窗口的页数与章外那一段都是运行参数而不是资料：它们决定翻译阶段每次请求带多少先例，所以
-        // 与附加说明一起写进管线配置，由 `koharu-pipeline` 在每页上就地取一个跨章连续的窗口。
-        apply_injection(&handle, rendered.text, assets.context_pages, prior)?;
-        report.matched = rendered.matched as u32;
-        report.unsupported = rendered.unsupported;
+        let prepared = injection::Prepared::for_chapter(&assets, chapter, &baseline)?;
+        report.matched = prepared.matched;
+        report.unsupported = prepared.unsupported;
 
-        let job = process(
+        let job = start_job(
             handle.clone(),
             koharu_pipeline::Scope::Project,
             operation.clone(),
-            handle.state::<CurrentProject>(),
             handle.state::<Processing>(),
             handle.state::<JobChannel>(),
+            Subject::ThisChapter(prepared),
         )
         .await?;
         tracing::info!(series = %series.id, chapter = %chapter, index = index + 1, total, "processing a chapter");
@@ -1054,7 +1077,6 @@ pub(crate) async fn process_series_chapters(
         library.write(&series)?;
         report.chapters += 1;
     }
-    restore_user_config(&handle)?;
     tracing::info!(
         target = "koharu_metrics",
         metric = "series_run",
@@ -1064,128 +1086,6 @@ pub(crate) async fn process_series_chapters(
         outcome = if report.unsupported { "provider_ignores_instructions" } else { "injected" },
     );
     Ok(report)
-}
-
-/// 一部漫画的翻译资料，按批量开始前的状态一次性备好。
-///
-/// **预扫描是必需的，不是优化。** 术语命中要看整部漫画的原文，而内核同一时刻只有一个活动项目，所以
-/// 「拿到全部原文」只能靠批量开始前逐章打开一次；上一章的基线也出自同一趟。两趟合一，每章两次打开，
-/// 与是否启用上文无关。
-struct SeriesAssets {
-    /// 漫画目录，上文旁挂文件与它同级。
-    directory: PathBuf,
-    /// 用户手写的指导。
-    guidance: String,
-    glossary: Glossary,
-    /// 整部漫画的原文，供术语命中判定。
-    haystack: String,
-    /// 上文窗口的页数：章内与章外取的都是「最近若干页」，用户只调一个旋钮。
-    context_pages: u32,
-    /// 章序号 → 章项目名，用来判「下一章」和读自己的上文。
-    order: Vec<(u32, String)>,
-}
-
-impl SeriesAssets {
-    /// 逐章打开一次，收集全部原文，并为每一章的下一章写下上文窗口的基线。
-    ///
-    /// 基线取自「磁盘上已有的译文」，所以中断之后重跑一批仍然拿得到上一章的写法。
-    async fn collect(
-        library: &SeriesLibrary,
-        series: &Series,
-        projects: &ProjectLibrary,
-    ) -> Result<Self> {
-        let directory = library.path(&series.id);
-        // 术语表坏了就报错，不静默当成空表：用户以为在生效的术语表不见了，比一次失败更难排查。
-        let glossary = crate::glossary::load(&directory)?;
-        let mut assets = Self {
-            directory,
-            guidance: series.settings.guidance.clone(),
-            glossary,
-            haystack: String::new(),
-            context_pages: series.settings.context_pages,
-            order: series
-                .chapters
-                .iter()
-                .map(|chapter| (chapter.seq, chapter.project.clone()))
-                .collect(),
-        };
-        for chapter in &series.chapters {
-            // 还没建项目的章没有原文可读，跳过而不是替它造一份空的。
-            let Ok(opened) = projects.open(&chapter.project).await else {
-                continue;
-            };
-            let snapshot = opened.snapshot();
-            assets.haystack.push_str(&injection::source_text(&snapshot)?);
-            let Some(next) = assets.successor(&chapter.project) else {
-                continue;
-            };
-            let context = injection::prior_chapter_context(&snapshot, assets.context_pages);
-            injection::save_prior_context(&assets.directory, next, &context)?;
-        }
-        Ok(assets)
-    }
-
-    /// 某章的下一章序号。序号是作品结构的客观顺序，与用户勾选和执行的顺序无关
-    /// （`docs/reference/koharu-glossary-design.md` §2.4）。
-    fn successor(&self, project: &str) -> Option<u32> {
-        let seq = self.seq(project).ok()?;
-        self.order
-            .iter()
-            .map(|(candidate, _)| *candidate)
-            .find(|candidate| *candidate > seq)
-    }
-
-    fn seq(&self, project: &str) -> Result<u32> {
-        self.order
-            .iter()
-            .find(|(_, candidate)| candidate == project)
-            .map(|(seq, _)| *seq)
-            .context("the chapter is not registered in this series")
-    }
-
-    /// 这一章的注入内容：只有人工资料。全局指导由调用方补上，因为它是用户的而不是这部漫画的。
-    ///
-    /// 上文不在这里：它逐页变化，由翻译阶段就地取一个跨章连续的窗口，所以走配置而不是走渲染。
-    fn injection(&self) -> Injection {
-        Injection {
-            guidance: self.guidance.clone(),
-            glossary: self.glossary.clone(),
-            haystack: self.haystack.clone(),
-            global: None,
-            order: None,
-        }
-    }
-}
-
-/// 把这一章的注入内容与上文窗口写进管线跑的那份配置。
-///
-/// 写的是**配置**而不是换一条管线：换管线会连翻译器一起重建，本地模型的权重要重读一遍盘，而重建阶段
-/// 运行器与翻译器共用同一个已加载模型。空串表示这一章没有可注入的内容，于是这一章就用回用户自己的
-/// 全局指导，而不是把字段清空。
-fn apply_injection(
-    handle: &AppHandle<CefRuntime>,
-    text: String,
-    context_pages: u32,
-    prior: Vec<Vec<koharu_translator::TranslationContext>>,
-) -> Result<()> {
-    let live = handle.state::<koharu_config::Config<koharu_pipeline::PipelineConfig>>();
-    let mut current = live.write()?;
-    current.translation.instructions = (!text.is_empty()).then_some(text);
-    current.translation.context_pages = context_pages;
-    current.translation.prior_chapter_context = prior;
-    Ok(())
-}
-
-/// 把管线跑的那份配置恢复成用户设置。
-///
-/// 重新读一次而不是回滚到批开始时的快照：批量期间用户改了设置的话，恢复成旧快照会把那次改动从管线里
-/// 抹掉，尽管它已经在文件里了。
-fn restore_user_config(handle: &AppHandle<CefRuntime>) -> Result<()> {
-    let user = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
-    let live = handle.state::<koharu_config::Config<koharu_pipeline::PipelineConfig>>();
-    let mut current = live.write()?;
-    *current = user;
-    Ok(())
 }
 
 /// 当前活动项目的场景。章刚被替换成活动项目，所以这一次拿到的就是它自己的。
