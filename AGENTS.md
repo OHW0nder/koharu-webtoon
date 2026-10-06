@@ -46,6 +46,12 @@ Document only durable, repository-specific constraints here. Do not record curre
 - Do not run full test suites, repeatedly rerun unchanged tests or builds, or build and test profiles other than debug unless the user explicitly requests it.
 - Run end-to-end tests only when the user explicitly asks for them.
 
+## Formatting
+
+- Match the formatting of the code you are editing. The repository is not normalized by any single tool, so "run the formatter" is not a step.
+- `cargo fmt` is not a check and not a fix here. The Rust side carries no rustfmt configuration and its existing style is wider than rustfmt's default, so `cargo fmt --all` rewrites files nobody touched and buries the actual change. Treat its diff output as pre-existing, not as a defect you introduced.
+- The frontend is formatted with `oxfmt` (`bun run format`), which stays scoped to `packages`.
+
 ## Desktop UI Debugging
 
 - Debug builds must expose the CEF remote debugging endpoint at `http://127.0.0.1:4000` through CEF's command-line arguments.
