@@ -1049,14 +1049,17 @@ pub(crate) async fn import_series(
     projects: State<'_, ProjectLibrary>,
     library: State<'_, SeriesLibrary>,
     processing: State<'_, Processing>,
-) -> std::result::Result<Series, Error> {
+) -> std::result::Result<Option<Series>, Error> {
     reject_import_while_processing(&processing)?;
+    // **取消不是错误，返回空就够了。** 关掉文件夹浏览器是用户对「不导入」的回答，而此刻漫画还不
+    // 存在，没有任何东西需要回滚——把它当成失败上报，只会让每一次改主意都弹一条红字。返回空也和
+    // 这个命令真正的上游实现一致：那里也是把选择器的结果包成 `Option` 传回来。
     let Some(folder) = rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .pick_folder()
         .await
     else {
-        return Err(anyhow::anyhow!("the import was cancelled").into());
+        return Ok(None);
     };
     let source = folder.path().to_owned();
     let projects = projects.inner().clone();
@@ -1095,7 +1098,7 @@ pub(crate) async fn import_series(
         rollback_projects(&projects, &created).await;
         return Err(error.into());
     }
-    Ok(series)
+    Ok(Some(series))
 }
 
 /// 每个计划中的章从哪个目录读。

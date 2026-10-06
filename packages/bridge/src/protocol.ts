@@ -84,7 +84,22 @@ export const commands = {
 	 *  **广告高度由对话框给出。** 这是唯一无处可存的一次：漫画尚不存在，索引里还没有地方放这个值，
 	 *  之后一律从设置区管理（`docs/series-settings-design.md` §2.3）。
 	 */
-	importSeries: (kind: ChapterKind, ad: AdBands) => __TAURI_INVOKE<Series>("import_series", { kind, ad }),
+	importSeries: (kind: ChapterKind, ad: AdBands) => __TAURI_INVOKE<{
+	/**
+	 *  目录名，同时是这部漫画的标识。
+	 * 
+	 *  它由所在位置决定，所以读取时以目录名为准覆盖文件里的值；写进文件只是为了在目录被
+	 *  改名之后还能看出原委。
+	 */
+	id: string,
+	title: string,
+	/**  连载为 `true`，单行为 `false`。只影响界面呈现，不改变任何处理逻辑。 */
+	serial: boolean,
+	/**  封面文件名。`None` 表示用户没有指定，界面渲染占位图。 */
+	cover: string | null,
+	chapters: SeriesChapter[],
+	settings: SeriesSettings,
+} | null>("import_series", { kind, ad }),
 	/**
 	 *  把一个下载好的章节文件夹并入这部漫画。
 	 * 

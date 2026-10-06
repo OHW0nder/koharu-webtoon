@@ -50,6 +50,25 @@ describe('StartView', () => {
 
     await waitFor(() => expect(useKoharuStore.getState().seriesId).toBe('Demo Title'))
   })
+
+  /** 关闭文件夹浏览器是用户对「不导入」的回答，而不是一次失败。命令因此交回空值而不是错误，
+   *  这里守住的是那份契约的前半段：空值不许被当成一部新漫画推上界面。
+   *
+   *  后半段（后端不许把取消抛成错误）由 `import_series` 的返回类型保证，两半合起来才是「取消之后
+   *  什么都没发生」。 */
+  it('stays on the shelf when the folder picker is dismissed', async () => {
+    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
+    vi.spyOn(commands, 'importSeries').mockResolvedValue(null)
+    renderShelf()
+
+    fireEvent.click(await screen.findByRole('button', { name: /^import$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /import series/i }))
+
+    await waitFor(() => expect(commands.importSeries).toHaveBeenCalled())
+    // 停在漫画柜：既没有跳进一部不存在的漫画，也没有把 shelf 换成别的视图。
+    expect(screen.getByRole('heading', { name: /shelf/i })).toBeInTheDocument()
+    expect(useKoharuStore.getState().seriesId).toBeNull()
+  })
 })
 
 const SUMMARY: SeriesSummary = {
