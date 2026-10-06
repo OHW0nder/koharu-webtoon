@@ -153,7 +153,7 @@ export function OutputPicker({
             disabled={disabled}
             aria-label={t('outputPicker.instructions')}
             placeholder={t('outputPicker.instructionsPlaceholder')}
-            className='max-h-20 min-h-20 resize-none overflow-y-auto text-[11px] leading-4'
+            className='field-sizing-fixed h-20 resize-none overflow-y-auto text-[11px] leading-4'
             onChange={(event) => {
               const instructions = event.currentTarget.value
               setDraft((current) => ({ ...current, instructions }))

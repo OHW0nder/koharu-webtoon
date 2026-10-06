@@ -210,7 +210,7 @@ export function SeriesSettings({
                 value={draft.guidance}
                 aria-label={t('series.settings.guidance')}
                 placeholder={t('series.settings.guidancePlaceholder')}
-                className='min-h-20 resize-y text-[11px] leading-4'
+                className='field-sizing-fixed max-h-48 min-h-20 resize-y overflow-y-auto text-[11px] leading-4'
                 onChange={(event) => setDraft({ ...draft, guidance: event.currentTarget.value })}
               />
               <p className='text-[9px] leading-4 text-muted-foreground'>
