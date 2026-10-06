@@ -121,7 +121,7 @@ pub(crate) fn encode_image(image: &DynamicImage) -> anyhow::Result<EncodedImage>
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct TranslationContext {
     pub source: String,
     pub translation: String,

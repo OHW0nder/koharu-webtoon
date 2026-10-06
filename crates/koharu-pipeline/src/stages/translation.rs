@@ -57,13 +57,15 @@ impl StageProcessor for Processor {
         if let Some(instructions) = self.config.instructions.as_deref() {
             request = request.with_instructions(instructions);
         }
-        // 章内上文：当前页之前若干页里已成对的原文与译文。走语境条目通道而不是附加说明，因为附加
-        // 说明是整批共用的一段散文，而上文的意义恰恰在于逐页不同。直接写字段而不是用
-        // `with_context`，因为那个构造器只在翻译层的测试里存在，而字段本身是公开的。
+        // 上文窗口：当前页之前最近的若干页，跨章边界连续——章内那几页就地取自场景，章外那几页由
+        // 漫画层递进来。走语境条目通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的
+        // 全部意义在于逐页不同。直接写字段而不是用 `with_context`，因为那个构造器只在翻译层的测试里
+        // 存在，而字段本身是公开的。
         request.context = crate::preceding_context(
             &input.scene,
             input.page,
             self.config.context_pages,
+            &self.config.prior_chapter_context,
         )?;
         if Translator::supports_vision(&self.config.model, &self.config.generation)
             && let Some(image) = input.images.get(&input.scene, input.page, "source").await?

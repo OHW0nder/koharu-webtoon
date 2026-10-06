@@ -21,7 +21,7 @@ mod stages;
 pub use config::{
     DetectionModel, InpaintingModel, OcrModel, PipelineConfig, ProcessorConfig, TranslationConfig,
 };
-pub use context::{MAX_CONTEXT_PAGES, preceding_context, trailing_context};
+pub use context::{MAX_CONTEXT_PAGES, preceding_context, trailing_pages};
 pub use error::{ErrorKind, PipelineError};
 pub use pipeline::Pipeline;
 pub use progress::{Progress, ProgressSink};

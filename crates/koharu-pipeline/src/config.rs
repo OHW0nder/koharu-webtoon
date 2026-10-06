@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use koharu_translator::{GenerationConfig, Language};
+use koharu_translator::{GenerationConfig, Language, TranslationContext};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use specta::Type;
 
@@ -178,12 +178,20 @@ pub struct TranslationConfig {
     #[specta(type = String)]
     pub target_language: Language,
     pub instructions: Option<String>,
-    /// 章内上文回溯的页数：翻译第 N 页时带上第 N−1 至第 N−N 页的成对双语对照。0 表示不注入。
+    /// 上文窗口的页数：翻译一页时带上它之前最近的若干页成对双语对照。0 表示不注入。
     ///
-    /// 走的是语境条目通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的全部意义在于
-    /// 逐页不同（见 `context` 模块）。值由漫画级设置给出，上限是 [`crate::MAX_CONTEXT_PAGES`]。
+    /// 窗口跨章边界连续，所以这一个值同时是章内与跨章的回溯距离，用户只调一个旋钮。走的是语境条目
+    /// 通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的全部意义在于逐页不同
+    /// （见 `context` 模块）。值由漫画级设置给出，上限是 [`crate::MAX_CONTEXT_PAGES`]。
     #[serde(default = "default_context_pages")]
     pub context_pages: u32,
+    /// 窗口里属于上一章的那几页：外层是页，内层是该页已成对的原文与译文，按阅读顺序。
+    ///
+    /// 由漫画层在每章开始前写一次，翻完一章后用刚跑出来的译文覆盖给下一章，所以同一批里排在后面的
+    /// 章吃到的是鲜的。翻译阶段只按窗口余量取它的尾部：本章的页数够了，它就完全不参与。非批量运行
+    /// 是空的，那时窗口只有章内部分。
+    #[serde(default)]
+    pub prior_chapter_context: Vec<Vec<TranslationContext>>,
 }
 
 impl Default for TranslationConfig {
@@ -194,11 +202,12 @@ impl Default for TranslationConfig {
             target_language: Language::English,
             instructions: None,
             context_pages: default_context_pages(),
+            prior_chapter_context: Vec::new(),
         }
     }
 }
 
-/// 章内上文的默认回溯页数。4 取自社区实现，合适的距离取决于模型与作品，只能实测确定。
+/// 上文窗口的默认页数。4 取自社区实现，合适的距离取决于模型与作品，只能实测确定。
 fn default_context_pages() -> u32 {
     4
 }
