@@ -36,12 +36,25 @@ pub(super) async fn models(client: &Client) -> Result<Vec<Model>> {
         .map(|model| Model {
             provider: Provider::DeepSeek,
             name: display_name(&model.id),
+            vision: supports_vision(&model.id),
             model: Some(model.id),
             quantizations: Vec::new(),
-            vision: false,
             reasoning: true,
         })
         .collect())
+}
+
+/// 图像输入由 flash 系列承接。
+///
+/// 官方 Vision 指南只声明 flash 系列接受图像，而 `deepseek-chat` 与
+/// `deepseek-reasoner` 是 flash 两种思考模式的旧别名，同样接受图像。pro 与
+/// coder 系列不出现在该页面上，按纯文本处理。
+///
+/// 未列出的新模型一律判为不支持：多发一张图会让整页翻译失败，而少发一张图
+/// 只是少一层上下文，两者不对等。
+fn supports_vision(id: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    id.contains("flash") || id.ends_with("-chat") || id.ends_with("-reasoner")
 }
 
 /// Sends one translation request.
@@ -223,6 +236,68 @@ mod tests {
         assert!(value.get("json_schema").is_none());
         assert!(value.get("frequency_penalty").is_none());
         assert!(value.get("presence_penalty").is_none());
+    }
+
+    #[test]
+    fn flash_models_take_images_and_pro_models_do_not() {
+        // 视觉能力挂在 flash 系列上，两个旧名是它的思考模式别名。
+        for id in [
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+            "deepseek-chat",
+            "deepseek-reasoner",
+        ] {
+            assert!(supports_vision(id), "{id} takes images");
+        }
+        for id in ["deepseek-v4-pro", "deepseek-coder", "deepseek-v4"] {
+            assert!(!supports_vision(id), "{id} is text only");
+        }
+    }
+
+    #[test]
+    fn a_vision_request_keeps_the_image_inside_the_user_message() {
+        // DeepSeek returns HTTP 400 when an image block reaches the system
+        // message, so the text-only system prompt is part of the contract
+        // rather than an optimization.
+        let body = ChatRequest {
+            model: "deepseek-flash",
+            messages: [
+                Message {
+                    role: "system",
+                    content: MessageContent::Text("return json".to_owned()),
+                },
+                Message {
+                    role: "user",
+                    content: MessageContent::Parts(vec![
+                        ContentPart::Text {
+                            text: "translate".to_owned(),
+                        },
+                        ContentPart::ImageUrl {
+                            image_url: ImageUrl {
+                                url: "data:image/jpeg;base64,AAAA".to_owned(),
+                            },
+                        },
+                    ]),
+                },
+            ],
+            thinking: Some(ThinkingConfig { kind: "disabled" }),
+            max_tokens: Some(1024),
+            response_format: ResponseFormat {
+                kind: "json_object",
+            },
+            temperature: None,
+            top_p: None,
+        };
+        let value = serde_json::to_value(body).unwrap();
+
+        assert_eq!(value["messages"][0]["content"], "return json");
+        assert_eq!(value["messages"][1]["content"][0]["type"], "text");
+        assert_eq!(value["messages"][1]["content"][1]["type"], "image_url");
+        assert_eq!(
+            value["messages"][1]["content"][1]["image_url"]["url"],
+            "data:image/jpeg;base64,AAAA"
+        );
     }
 
     #[test]
