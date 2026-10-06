@@ -34,31 +34,8 @@ export const commands = {
 	layers: Layer[],
 	regions: AnalysisRegion[],
 } | null>("get_page").then((v) => (v==null?v:({...v,layers:v.layers.map(i=>i),regions:v.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))}) as typeof v)),
-	/**
-	 *  列出没有任何漫画认领的项目，也就是漫画柜下方的「未分组项目」。
-	 * 
-	 *  认领关系由漫画索引决定，不由内核的项目枚举决定：内核只认项目，章项目在它眼里仍然是
-	 *  普通项目，能不能单独打开取决于有没有被登记成某一章。
-	 */
-	listProjects: () => __TAURI_INVOKE<ProjectSummary[]>("list_projects"),
-	createProject: (name: string) => __TAURI_INVOKE<null>("create_project", { name }),
 	openProject: (name: string) => __TAURI_INVOKE<null>("open_project", { name }),
-	deleteProject: (name: string) => __TAURI_INVOKE<null>("delete_project", { name }),
 	closeProject: () => __TAURI_INVOKE<null>("close_project"),
-	import: (source: PageImportSource) => __TAURI_INVOKE<null>("import", { source }),
-	/**
-	 *  Imports a webtoon, dividing images that are far taller than they are wide into pages.
-	 * 
-	 *  This is a path of its own rather than another parameter on the upstream import command. That
-	 *  command keeps its signature, so the generated frontend protocol does not diverge from
-	 *  upstream; the two paths share the picker, the commit and the canvas synchronization, and
-	 *  differ only in how a tall image becomes pages.
-	 */
-	importWebtoon: (source: PageImportSource, slicing: 
-/**  图片自身几何像条漫时才切。这是默认值，普通导入不需要用户做任何决定。 */
-"auto" | 
-/**  切所有高于一页的图片，用于长宽比没触到自动门限的条漫。 */
-"forced" | null) => __TAURI_INVOKE<null>("import_webtoon", { source, slicing }),
 	/**  漫画柜里的全部漫画。 */
 	listSeries: () => __TAURI_INVOKE<SeriesSummary[]>("list_series"),
 	/**  One series with its chapters, which is what the chapter list needs. */
@@ -113,6 +90,9 @@ export const commands = {
 	 * 
 	 *  Discovery is separate from import on purpose: which kind a chapter is has to be chosen per
 	 *  chapter, and a wrong cut is expensive to undo.
+	 * 
+	 *  候选里没有「这一章会是第几话」：一次只导入一个候选，而导入第一个就会填掉一个空洞，所以列表里
+	 *  剩下那些预览出来的序号在用户点下去之前就已经错了。一个常驻界面上却不准确的数字比没有更糟。
 	 */
 	scanSeriesSource: (id: string) => __TAURI_INVOKE<CandidateChapter[]>("scan_series_source", { id }),
 	/**
@@ -129,6 +109,44 @@ export const commands = {
 	tail: number,
 } | null) => __TAURI_INVOKE<Series>("import_series_chapter", { id, name, kind, ad }),
 	/**
+	 *  删掉一章，连同它的章项目。
+	 * 
+	 *  **删除的语义是「这一章导错了，之后会重新导入同一话」，所以项目必须一起删。** 重导的项目名是
+	 *  `<漫画名> Ch<序号>`，与被删的那个同名；留着它，`projects.create` 会直接撞名，于是「重新导入」这条路
+	 *  走不通（`docs/series-management-design.md` §1）。
+	 * 
+	 *  **其余章的序号一个都不动。** 序号是 `context-<序号>.json` 的键，也是「下一章」判定的依据，重排会让
+	 *  已有的译文上文错位到错误的章。删中间一章之后序号出现空洞，那正是「这里少了一话」的可读表示；下一个
+	 *  导入的章节由 [`next_seq`] 把这个空洞补回去，于是重导的那一章拿回原来的位置，上文也就仍然来自它
+	 *  前面那一章。
+	 */
+	deleteSeriesChapter: (id: string, project: string) => __TAURI_INVOKE<Series>("delete_series_chapter", { id, project }),
+	/**
+	 *  删掉一部漫画，连同它的全部章项目。
+	 * 
+	 *  **章项目必须一起删。** 一个章项目只能属于一部漫画（`docs/series-management-design.md` §1），而「没有被
+	 *  任何漫画认领的项目」这一类已经取消。留着它们只会得到一批没有归属的项目——既不进漫画柜，也删不掉。
+	 * 
+	 *  译文是唯一无法从源目录重建的东西，所以界面上必须先讲清不可逆的范围。
+	 */
+	deleteSeries: (id: string) => __TAURI_INVOKE<null>("delete_series", { id }),
+	/**
+	 *  重新指定源目录。
+	 * 
+	 *  **只换目录，不自动导入。** 换源之后新目录里的章名可能与已登记的 `source` 撞名，而自动导入会把正在
+	 *  正常工作的章重导一遍；让用户点「导入新章」、在候选列表里看到文件数之后再确认。
+	 * 
+	 *  已经登记的章不受影响：它们记的是相对 `source_root` 的目录名，而那些章项目与译文都已经建好了。
+	 */
+	setSeriesSource: (id: string) => __TAURI_INVOKE<Series>("set_series_source", { id }),
+	/**
+	 *  改一部漫画的标题。
+	 * 
+	 *  **目录名要一起改。** `id` 就是目录名，而它是这部漫画唯一的标识；让目录名长得像标题，是为了让用户在
+	 *  文件系统里也能读懂这个文件夹是什么。
+	 */
+	renameSeries: (id: string, title: string) => __TAURI_INVOKE<Series>("rename_series", { id, title }),
+	/**
 	 *  Runs a processing job over the given chapters, one after another.
 	 * 
 	 *  The kernel allows exactly one project and one job at a time, so the batch is a serial loop:
@@ -136,8 +154,8 @@ export const commands = {
 	 *  its own, so an interrupted batch resumes by simply running the chapters that are still pending.
 	 * 
 	 *  **注入内容在每章开始前换一次。** 换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文
-	 *  窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户
-	 *  配置，漫画的资料不会漏进设置页。
+	 *  窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。还原由 [`start_job`] 在每章跑完后
+	 *  做，漫画的资料因此不会漏进设置页。
 	 */
 	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<SeriesRun>("process_series_chapters", { id, projects, operation }),
 	/**
@@ -161,6 +179,12 @@ export const commands = {
 	moveLayer: (layer: EntityId, parent: EntityId, index: number) => __TAURI_INVOKE<Page>("move_layer", { layer, parent, index }).then((v) => (({...v,layers:v.layers.map(i=>i),regions:v.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))}) as typeof v)),
 	undo: () => __TAURI_INVOKE<null>("undo"),
 	redo: () => __TAURI_INVOKE<null>("redo"),
+	/**
+	 *  Runs the pipeline over the open project and returns as soon as the job is registered.
+	 * 
+	 *  漫画资料在这一层算，不在批量那一层：单独打开一章跑和在同一批里跑这一章，必须拿到同一段提示词，
+	 *  否则「跑批」和「补跑一章」会译出两种结果，而用户看不出区别。
+	 */
 	process: (scope: Scope, operation: Operation) => __TAURI_INVOKE<JobId>("process", { scope, operation }),
 	stopJob: (job: JobId) => __TAURI_INVOKE<null>("stop_job", { job }),
 	export: (format: ExportFormat) => __TAURI_INVOKE<null>("export", { format }),
@@ -233,8 +257,6 @@ export type CaiyunConfig = Record<string, never>;
 /**  A chapter directory the downloader produced that the series has not claimed yet. */
 export type CandidateChapter = {
 	name: string,
-	/**  The number this chapter would take. */
-	seq: number,
 	/**
 	 *  How many importable files the directory holds. One long image reads very differently from
 	 *  a page folder, so this is what the user decides the chapter kind on.
@@ -588,15 +610,6 @@ export type Page = {
 	regions: AnalysisRegion[],
 };
 
-/**  条漫导入如何处理远高于宽度的图片。 */
-export type PageImportSlicing = 
-/**  图片自身几何像条漫时才切。这是默认值，普通导入不需要用户做任何决定。 */
-"auto" | 
-/**  切所有高于一页的图片，用于长宽比没触到自动门限的条漫。 */
-"forced";
-
-export type PageImportSource = "files" | "folder";
-
 export type PageSelection = {
 	project: ProjectInfo,
 	page: Page,
@@ -656,10 +669,6 @@ export type ProjectInfo = {
 	active_page: EntityId | null,
 	can_undo: boolean,
 	can_redo: boolean,
-};
-
-export type ProjectSummary = {
-	name: string,
 };
 
 export type Provider = "local" | "openai" | "gemini" | "claude" | "grok" | "minimax" | "deepseek" | "openai-compatible" | "openrouter" | "lm-studio" | "deepl" | "google-cloud-translation" | "caiyun";
@@ -846,9 +855,9 @@ export type TranslationConfig = {
 	/**
 	 *  窗口里属于上一章的那几页：外层是页，内层是该页已成对的原文与译文，按阅读顺序。
 	 * 
-	 *  由漫画层在每章开始前写一次，翻完一章后用刚跑出来的译文覆盖给下一章，所以同一批里排在后面的
-	 *  章吃到的是鲜的。翻译阶段只按窗口余量取它的尾部：本章的页数够了，它就完全不参与。非批量运行
-	 *  是空的，那时窗口只有章内部分。
+	 *  由漫画层在每章开始前写一次，跑批时翻完一章再用刚跑出来的译文覆盖给下一章，所以同一批里排在
+	 *  后面的章吃到的是鲜的。单章运行没有「下一章」可覆盖，它读到的是漫画目录里已有的基线，也就是
+	 *  上一章磁盘上已有的译文；那章还没翻过时是空的，此时窗口只有章内部分。
 	 */
 	prior_chapter_context?: TranslationContext[][],
 };

@@ -1,7 +1,9 @@
 //! 漫画层：一部漫画作为一组章项目的索引，再加上漫画自己的数据。
 //!
-//! 内核只认项目（`.khrproj`），漫画不是内核概念，而是这一层维护的索引。它与章项目解耦：
-//! 删掉一章不影响漫画定义，删掉漫画也不会去动章项目，两边的生命周期各自独立。
+//! 内核只认项目（`.khrproj`），漫画不是内核概念，而是这一层维护的索引。两者不是解耦的：**每一个章
+//! 项目都恰好被一部漫画的一个章条目认领**，所以删除一路收在这一层——删章连带删它的项目，删漫画连带
+//! 删全部章项目。曾经存在过的「未认领的普通项目」这一类已经取消（`docs/series-management-design.md`
+//! §1），因为它让同一件事有两种归属方式，也让章项目的删除只有一半。
 //!
 //! 索引放在漫画目录里，因此它跟着漫画一起被移动、备份和删除。章在索引里只记项目名，因为
 //! 项目名是内核唯一稳定的公开标识；章项目在内核眼中仍然是普通项目，能被单独打开、单独
@@ -25,9 +27,9 @@ use tauri_runtime_cef::CefRuntime;
 use super::{
     Error,
     import::{self, AdBandSkip, Format, Slicing},
-    lifecycle::replace_project,
+    lifecycle::{close_current_project, replace_project},
     output::{ExportFormat, export_snapshot},
-    processing::{JobChannel, JobId, JobState, Processing, Subject, start_job},
+    processing::{JobChannel, Processing, Subject, start_job},
     project::{CurrentProject, ProjectLibrary},
     reject_import_while_processing, reject_settings_while_processing,
 };
@@ -312,11 +314,6 @@ impl GlossaryEntryId {
     pub fn new() -> Self {
         Self(uuid::Uuid::now_v7())
     }
-
-    #[must_use]
-    pub const fn as_uuid(self) -> uuid::Uuid {
-        self.0
-    }
 }
 
 impl Default for GlossaryEntryId {
@@ -524,22 +521,11 @@ impl SeriesLibrary {
         Ok(entries.into_iter().map(|(_, series)| series.into()).collect())
     }
 
-    /// 全部漫画已认领的章项目名。
-    ///
-    /// 章项目与漫画共用项目根目录、同一套 `.khrproj` 实体，分组与否只取决于索引里有没有它，
-    /// 所以"未被认领"就是未分组项目的准确定义。
-    pub(crate) fn claimed_projects(&self) -> Result<BTreeSet<String>> {
-        Ok(self
-            .indices()?
-            .into_iter()
-            .flat_map(|series| series.chapters.into_iter().map(|chapter| chapter.project))
-            .collect())
-    }
-
     /// 反查这个项目属于哪部漫画。
     ///
-    /// 章在索引里只记项目名，所以归属就是一次字符串匹配。没有被任何漫画认领的项目返回 `None`：那是一条
-    /// 独立的普通项目，本来就没有漫画资料。
+    /// 章在索引里只记项目名，所以归属就是一次字符串匹配。每个项目都属于且只属于一部漫画
+    /// （`docs/series-management-design.md` §1），所以查不到只可能是章项目已经被删掉而索引没跟上——那是
+    /// 损坏的索引，而不是一种合法的「独立项目」。
     pub(crate) fn owning_series(&self, project: &str) -> Result<Option<Series>> {
         Ok(self
             .indices()?
@@ -709,8 +695,6 @@ pub(crate) fn get_series(
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct CandidateChapter {
     pub name: String,
-    /// The number this chapter would take.
-    pub seq: u32,
     /// How many importable files the directory holds. One long image reads very differently from
     /// a page folder, so this is what the user decides the chapter kind on.
     pub files: u32,
@@ -720,6 +704,9 @@ pub struct CandidateChapter {
 ///
 /// Discovery is separate from import on purpose: which kind a chapter is has to be chosen per
 /// chapter, and a wrong cut is expensive to undo.
+///
+/// 候选里没有「这一章会是第几话」：一次只导入一个候选，而导入第一个就会填掉一个空洞，所以列表里
+/// 剩下那些预览出来的序号在用户点下去之前就已经错了。一个常驻界面上却不准确的数字比没有更糟。
 #[tauri::command]
 #[specta::specta]
 pub(crate) fn scan_series_source(
@@ -734,39 +721,107 @@ pub(crate) fn scan_series_source(
         .chapters
         .iter()
         .filter_map(|chapter| chapter.source.as_deref())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut next = series.chapters.len() as u32 + 1;
+        .collect::<BTreeSet<_>>();
 
     let mut children = fs::read_dir(root)
         .with_context(|| format!("failed to read {}", root.display()))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| !known.contains(name))
+        .filter_map(|entry| {
+            // 名字在这里取一次：既是排除已登记目录的键，也是后面的排序键。
+            let name = entry.file_name().to_str()?.to_owned();
+            (!known.contains(name.as_str())).then(|| (entry.path(), name))
         })
         .collect::<Vec<_>>();
-    children.sort();
+    children.sort_by(|left, right| natural_cmp(&left.1, &right.1));
 
     Ok(children
         .into_iter()
-        .filter_map(|path| {
-            let name = path.file_name()?.to_str()?.to_owned();
+        .filter_map(|(path, name)| {
             let files = import::collect_importable(&path).ok()?.len() as u32;
-            if files == 0 {
-                return None;
-            }
-            let candidate = CandidateChapter {
-                name,
-                seq: next,
-                files,
-            };
-            next += 1;
-            Some(candidate)
+            // 空目录不是「一章待导入」，是下载器留下的残骸。列出来只会让人以为漏了内容。
+            (files > 0).then_some(CandidateChapter { name, files })
         })
         .collect())
+}
+
+/// 章名的自然序：数字段按数值比，其余按字符比。
+///
+/// 章目录是下载器按数字命名的，所以 `Ch100` 必须排在 `Ch02` 之后。`str` 的字典序做不到这一点，而
+/// 顺序错乱会让候选列表看起来漏了章，也会让按顺序导入把章映射到错误的槽位。自己实现而不是加依赖：
+/// 这段逻辑只有这一处要用，为它引入一个 crate 的升级成本高于这三十行代码。
+fn natural_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    natural_order(left, right).then_with(|| left.cmp(right))
+}
+
+fn natural_order(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let mut left = left.chars().peekable();
+    let mut right = right.chars().peekable();
+    loop {
+        let left_digit = left.peek().is_some_and(char::is_ascii_digit);
+        let right_digit = right.peek().is_some_and(char::is_ascii_digit);
+        match (left_digit, right_digit) {
+            // 只有一边是数字段（`Ch2` 与 `ChA`）：数字段在前。
+            (true, false) => return Ordering::Less,
+            (false, true) => return Ordering::Greater,
+            // 两边都是数字段：按数值比，`Ch2` < `Ch10`。
+            (true, true) => {
+                let order = digits(&mut left).cmp(&digits(&mut right));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            // 两边都不是数字段：要么都走完了，要么现在逐字符比。
+            (false, false) => match (left.next(), right.next()) {
+                (None, None) => return Ordering::Equal,
+                (None, _) => return Ordering::Less,
+                (_, None) => return Ordering::Greater,
+                (Some(one), Some(two)) if one == two => {}
+                (Some(one), Some(two)) => return one.cmp(&two),
+            },
+        }
+    }
+}
+
+/// 吃掉下一个连续数字段，返回它的数值。
+///
+/// 溢出停在已经读到的数上：位数多到溢出时，两边的位数早已分出大小，而剩下的数字不会改变结论。
+fn digits(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> u64 {
+    let mut value = 0_u64;
+    while let Some(&digit) = chars.peek() {
+        if !digit.is_ascii_digit() {
+            break;
+        }
+        chars.next();
+        value = value.saturating_mul(10) + u64::from(digit as u8 - b'0');
+    }
+    value
+}
+
+/// 下一个可用的章序号。
+///
+/// **序号是作品结构里的槽位，不是单调计数器。** 用户删掉导错的第 22 章之后会重新导入同一话，那一话
+/// 必须拿回 22：否则它会排到 24 章之后，而 `Assets::successor` 与 `context-<seq>.json` 都按序号建立
+/// 关系，它的上文会去取 24 章的译文而不是 21 章的。所以先补最小的空洞，没有空洞才往上接。
+///
+/// 序号不连续不代表作品有错，空洞本身是有意义的信息：它标着这里少了一话。
+fn next_seq(chapters: &[SeriesChapter]) -> u32 {
+    let taken = chapters
+        .iter()
+        .map(|chapter| chapter.seq)
+        .collect::<BTreeSet<_>>();
+    // 上界是 `max + 1` 而不是 `len + 1`：序号可以是稀疏的（删掉中间一章就留下空洞），而**每一个**
+    // 空洞都在 `max + 1` 之前，所以扫到这里一定有答案。`len + 1` 只在序号连续时才是对的，而那正是
+    // 唯一不需要补空洞的情况。
+    let ceiling = taken
+        .iter()
+        .next_back()
+        .map_or(1, |seq| seq.saturating_add(1));
+    (1..=ceiling)
+        .find(|seq| !taken.contains(seq))
+        .expect("the ceiling sits above every taken slot")
 }
 
 /// 把广告带的执行结果写成一条日志。
@@ -823,10 +878,7 @@ pub(crate) async fn import_series_chapter(
         return Err(anyhow::anyhow!("this series has no source folder to import from").into());
     };
 
-    let seq = series
-        .chapters
-        .last()
-        .map_or(1, |chapter| chapter.seq + 1);
+    let seq = next_seq(&series.chapters);
     let stem = sanitize(&series.title);
     let stem = if stem.is_empty() { "series" } else { &stem };
     let directory = root.join(&name);
@@ -855,6 +907,158 @@ pub(crate) async fn import_series_chapter(
         kind,
         status: ChapterStatus::Ready,
     });
+    library.write(&series)?;
+    Ok(series)
+}
+
+/// 关掉正在打开的章项目，然后删掉它。
+///
+/// 活动项目不能直接删：内核里还持有一份打开的场景，所以先走正常的关闭路径。
+async fn delete_chapter_project(
+    handle: &AppHandle<CefRuntime>,
+    project: &str,
+    library: ProjectLibrary,
+) -> Result<()> {
+    let active = handle
+        .state::<CurrentProject>()
+        .project
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|open| open.name == project);
+    if active {
+        close_current_project(handle).await?;
+    }
+    // 阻塞任务要 `'static`，所以名字得自己拥有，不能把借用送进去。
+    let owned = project.to_owned();
+    tokio::task::spawn_blocking(move || library.delete(&owned))
+        .await
+        .context("project deletion task failed")?
+}
+
+/// 删掉一章，连同它的章项目。
+///
+/// **删除的语义是「这一章导错了，之后会重新导入同一话」，所以项目必须一起删。** 重导的项目名是
+/// `<漫画名> Ch<序号>`，与被删的那个同名；留着它，`projects.create` 会直接撞名，于是「重新导入」这条路
+/// 走不通（`docs/series-management-design.md` §1）。
+///
+/// **其余章的序号一个都不动。** 序号是 `context-<序号>.json` 的键，也是「下一章」判定的依据，重排会让
+/// 已有的译文上文错位到错误的章。删中间一章之后序号出现空洞，那正是「这里少了一话」的可读表示；下一个
+/// 导入的章节由 [`next_seq`] 把这个空洞补回去，于是重导的那一章拿回原来的位置，上文也就仍然来自它
+/// 前面那一章。
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn delete_series_chapter(
+    id: String,
+    project: String,
+    handle: AppHandle<CefRuntime>,
+    projects: State<'_, ProjectLibrary>,
+    library: State<'_, SeriesLibrary>,
+    processing: State<'_, Processing>,
+) -> std::result::Result<Series, Error> {
+    reject_import_while_processing(&processing)?;
+    let mut series = library.read(&id)?;
+    let chapter = series
+        .chapters
+        .iter()
+        .find(|chapter| chapter.project == project)
+        .cloned()
+        .with_context(|| format!("{project} is not a chapter of this series"))?;
+    delete_chapter_project(&handle, &project, projects.inner().clone()).await?;
+    series.chapters.retain(|entry| entry.project != project);
+    // 失效的旁挂文件清掉：新章还没建好项目时预扫描打不开它，上下文就会留着旧译文，那比没有更坏。
+    injection::discard_prior_context_after(&library.path(&id), chapter.seq)?;
+    library.write(&series)?;
+    tracing::info!(series = %id, chapter = %project, seq = chapter.seq, "deleted a chapter");
+    Ok(series)
+}
+
+/// 删掉一部漫画，连同它的全部章项目。
+///
+/// **章项目必须一起删。** 一个章项目只能属于一部漫画（`docs/series-management-design.md` §1），而「没有被
+/// 任何漫画认领的项目」这一类已经取消。留着它们只会得到一批没有归属的项目——既不进漫画柜，也删不掉。
+///
+/// 译文是唯一无法从源目录重建的东西，所以界面上必须先讲清不可逆的范围。
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn delete_series(
+    id: String,
+    handle: AppHandle<CefRuntime>,
+    projects: State<'_, ProjectLibrary>,
+    library: State<'_, SeriesLibrary>,
+    processing: State<'_, Processing>,
+) -> std::result::Result<(), Error> {
+    reject_import_while_processing(&processing)?;
+    let series = library.read(&id)?;
+    let projects = projects.inner().clone();
+    for chapter in &series.chapters {
+        delete_chapter_project(&handle, &chapter.project, projects.clone()).await?;
+    }
+    let directory = library.path(&id);
+    let shown = directory.clone();
+    tokio::task::spawn_blocking(move || fs::remove_dir_all(&directory))
+        .await
+        .context("series deletion task failed")?
+        .with_context(|| format!("failed to delete {}", shown.display()))?;
+    tracing::info!(series = %id, chapters = series.chapters.len(), "deleted a series");
+    Ok(())
+}
+
+/// 重新指定源目录。
+///
+/// **只换目录，不自动导入。** 换源之后新目录里的章名可能与已登记的 `source` 撞名，而自动导入会把正在
+/// 正常工作的章重导一遍；让用户点「导入新章」、在候选列表里看到文件数之后再确认。
+///
+/// 已经登记的章不受影响：它们记的是相对 `source_root` 的目录名，而那些章项目与译文都已经建好了。
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_series_source(
+    id: String,
+    window: WebviewWindow<CefRuntime>,
+    library: State<'_, SeriesLibrary>,
+) -> std::result::Result<Series, Error> {
+    let Some(folder) = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .pick_folder()
+        .await
+    else {
+        return Err(anyhow::anyhow!("the import was cancelled").into());
+    };
+    let mut series = library.read(&id)?;
+    series.source_root = Some(folder.path().to_owned());
+    library.write(&series)?;
+    Ok(series)
+}
+
+/// 改一部漫画的标题。
+///
+/// **目录名要一起改。** `id` 就是目录名，而它是这部漫画唯一的标识；让目录名长得像标题，是为了让用户在
+/// 文件系统里也能读懂这个文件夹是什么。
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn rename_series(
+    id: String,
+    title: String,
+    library: State<'_, SeriesLibrary>,
+) -> std::result::Result<Series, Error> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(anyhow::anyhow!("a series title cannot be blank").into());
+    }
+    let mut series = library.read(&id)?;
+    let renamed = directory_name(title, |candidate| {
+        candidate != id && library.path(candidate).exists()
+    })
+    .with_context(|| format!("{title:?} cannot be used as a directory name"))?;
+    if renamed != id {
+        let from = library.path(&id);
+        fs::rename(&from, library.path(&renamed))
+            .with_context(|| format!("failed to rename {}", from.display()))?;
+    }
+    series.id = renamed.clone();
+    series.title = title.to_owned();
     library.write(&series)?;
     Ok(series)
 }
@@ -1050,7 +1254,7 @@ pub(crate) async fn process_series_chapters(
         report.matched = prepared.matched;
         report.unsupported = prepared.unsupported;
 
-        let job = start_job(
+        let started = start_job(
             handle.clone(),
             koharu_pipeline::Scope::Project,
             operation.clone(),
@@ -1060,7 +1264,10 @@ pub(crate) async fn process_series_chapters(
         )
         .await?;
         tracing::info!(series = %series.id, chapter = %chapter, index = index + 1, total, "processing a chapter");
-        wait_for_job(&handle.state::<Processing>(), job).await?;
+        // 章名进消息：跑批会一路停在出错的那一章，没有章名的报错在界面上等于没有报错。
+        if let Err(error) = started.terminal().await {
+            return Err(anyhow::anyhow!("{chapter}: {error:#}").into());
+        }
         // 这一章刚跑出来的译文比预扫描时鲜，覆盖写给下一章，同一批里排在后面的章因此能吃到。
         if let Some(next) = assets.successor(chapter) {
             let snapshot = current_snapshot(&handle).await?;
@@ -1093,24 +1300,6 @@ async fn current_snapshot(handle: &AppHandle<CefRuntime>) -> Result<koharu_scene
     let current = handle.state::<CurrentProject>();
     let project = current.project.lock().await;
     Ok(project.as_ref().context("no project is open")?.snapshot())
-}
-
-/// Waits for one job to leave the running state.
-///
-/// Polling rather than subscribing keeps the batch self-contained: the job channel is already
-/// spoken for by the running job, and a batch only needs the terminal state.
-async fn wait_for_job(processing: &Processing, job: JobId) -> Result<()> {
-    loop {
-        let state = processing.jobs.lock().get(&job).map(|job| job.state.clone());
-        match state {
-            Some(JobState::Finished) => return Ok(()),
-            Some(JobState::Failed) => bail!("the chapter's job failed"),
-            Some(JobState::Stopped) => bail!("the chapter's job was stopped"),
-            Some(JobState::Running) | None => {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-        }
-    }
 }
 
 /// Exports the given chapters side by side under one chosen folder.
@@ -1268,5 +1457,57 @@ mod tests {
             serde_json::from_str(r#"{"ad":{"head":0,"tail":0},"guidance":"","glossary":null,"context_pages":0}"#)
                 .expect("an index that turned the feature off");
         assert_eq!(disabled.context_pages, 0);
+    }
+
+    /// 造一章只为占住一个序号。
+    fn chapter(seq: u32) -> SeriesChapter {
+        SeriesChapter {
+            seq,
+            title: format!("Ch{seq}"),
+            project: format!("Ch{seq}"),
+            source: Some(format!("Ch{seq}")),
+            kind: ChapterKind::Manga,
+            status: ChapterStatus::Ready,
+        }
+    }
+
+    #[test]
+    fn a_deleted_chapter_leaves_a_slot_the_next_import_reclaims() {
+        // 用户在一部 24 话的连载里删掉了导错的第 22 章，然后重新导入它：必须拿回 22，而不是接在
+        // 24 之后。那一章的上文因此仍然来自 21 章——`context-<seq>.json` 与 `Assets::successor`
+        // 都是按序号建立关系的。
+        let kept: Vec<SeriesChapter> = (1..=21).chain([23, 24]).map(chapter).collect();
+        assert_eq!(next_seq(&kept), 22, "the gap takes the next chapter");
+
+        let whole: Vec<SeriesChapter> = (1..=24).map(chapter).collect();
+        assert_eq!(next_seq(&whole), 25, "no gap means the next number");
+
+        assert_eq!(next_seq(&[]), 1, "an empty series starts at one");
+
+        // 洞在开头就补开头，而不是补末尾：重导第 1 章的用户要的是第 1 章。
+        let headless: Vec<SeriesChapter> = [2, 3, 4].into_iter().map(chapter).collect();
+        assert_eq!(next_seq(&headless), 1);
+    }
+
+    #[test]
+    fn chapter_directories_sort_by_number_not_by_text() {
+        // 字典序会把 `Ch100` 排在 `Ch02` 前面，而下载器就是这么命名的。
+        let mut names = ["Ch100", "Ch02", "Ch2", "Ch24", "Ch023", "Ch1"];
+        names.sort_by(|left, right| natural_cmp(left, right));
+        assert_eq!(
+            names,
+            ["Ch1", "Ch02", "Ch2", "Ch023", "Ch24", "Ch100"],
+            "numerically ascending, with `Ch02` before `Ch2` because those tie and fall back to text"
+        );
+
+        assert_eq!(natural_cmp("Ch2", "Ch10"), std::cmp::Ordering::Less);
+        assert_eq!(natural_cmp("Ch10", "Ch2"), std::cmp::Ordering::Greater);
+        assert_eq!(natural_cmp("Ch2", "Ch2"), std::cmp::Ordering::Equal);
+        // 数字段在前：与逐字符比出来的直觉一致。
+        assert_eq!(natural_cmp("Ch2", "ChA"), std::cmp::Ordering::Less);
+        // 前缀是更短的串，所以更小。
+        assert_eq!(natural_cmp("Ch1", "Ch10"), std::cmp::Ordering::Less);
+        // 数值相同的两种写法自然序相等，于是退回字典序让先后是确定的。
+        assert_eq!(natural_cmp("Ch007", "Ch7"), std::cmp::Ordering::Less);
     }
 }

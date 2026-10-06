@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use koharu_pipeline::{Committer, Progress, RunStatus, StageOutput, StopToken};
 use koharu_scene::Snapshot;
 use parking_lot::Mutex;
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager as _, State, ipc::Channel};
 use tauri_runtime_cef::CefRuntime;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::{
@@ -87,6 +88,35 @@ pub(crate) struct JobChannel {
     pub(crate) channel: Mutex<Option<Channel<Job>>>,
 }
 
+/// 一次已登记的作业。
+///
+/// **终态随作业一起交出来，而不是让调用方回头查 `Processing::jobs`。** 作业结束时本来就会把自己从
+/// 那个 map 里移除（移除后经 `JobChannel` 广播终态），所以 map 里只有运行中的作业；`replace_project`
+/// 每次切章还会 `jobs.clear()`。批量要等一章跑完，只能拿这一个一次性的接收端。
+pub(crate) struct Started {
+    pub(crate) id: JobId,
+    terminal: oneshot::Receiver<JobState>,
+}
+
+impl Started {
+    /// 等到作业跑完，失败与被停都算跑不完。
+    ///
+    /// 终态的解释收在这里而不是留给调用处：作业自己的收尾决定它算完成、失败还是被停，调用方只需要
+    /// 知道「这一章算不算跑完了」。任务被丢弃意味着作业没能走到收尾，那按失败算而不是当成完成。
+    pub(crate) async fn terminal(self) -> Result<()> {
+        match self
+            .terminal
+            .await
+            .context("the job's task was dropped before it finished")?
+        {
+            JobState::Finished => Ok(()),
+            JobState::Failed => bail!("the processing job failed"),
+            JobState::Stopped => bail!("the processing job was stopped"),
+            JobState::Running => bail!("the processing job ended without finishing"),
+        }
+    }
+}
+
 /// 这一次运行用哪一部漫画的资料。
 pub(crate) enum Subject {
     /// 当前打开的项目。漫画归属要反查才知道；不是任何漫画的章，就只跑用户自己的全局指导。
@@ -108,7 +138,7 @@ pub(crate) async fn process(
     processing: State<'_, Processing>,
     job_channel: State<'_, JobChannel>,
 ) -> std::result::Result<JobId, Error> {
-    start_job(
+    let started = start_job(
         handle,
         scope,
         operation,
@@ -116,7 +146,8 @@ pub(crate) async fn process(
         job_channel,
         Subject::CurrentProject,
     )
-    .await
+    .await?;
+    Ok(started.id)
 }
 
 /// 注册并启动一次作业，跑完后把漫画资料从管线配置里还原。
@@ -131,7 +162,7 @@ pub(crate) async fn start_job(
     processing: State<'_, Processing>,
     job_channel: State<'_, JobChannel>,
     subject: Subject,
-) -> std::result::Result<JobId, Error> {
+) -> std::result::Result<Started, Error> {
     // 名字与场景必须同一次加锁取出来：名字要拿去反查漫画归属，场景是这一次真正处理的，两者错配就会
     // 把一部漫画的资料算到另一章上。
     let (name, snapshot) = {
@@ -179,6 +210,7 @@ pub(crate) async fn start_job(
     let pipeline = handle.state::<koharu_pipeline::Pipeline>().inner().clone();
     let task_handle = handle.clone();
     let inpainting_mask = processing.inpainting_mask.lock().take();
+    let (finished, terminal) = oneshot::channel();
     drop(tokio::spawn(async move {
         let progress = Arc::new(Mutex::new((0_usize, 0_usize)));
         let progress_handle = task_handle.clone();
@@ -315,6 +347,13 @@ pub(crate) async fn start_job(
                 (false, Some(format!("{error:#}")))
             }
         };
+        let state = if stopped {
+            JobState::Stopped
+        } else if error.is_some() {
+            JobState::Failed
+        } else {
+            JobState::Finished
+        };
         tracing::info!(
             target: "koharu_metrics",
             metric = "pipeline_result",
@@ -333,21 +372,18 @@ pub(crate) async fn start_job(
             .lock()
             .remove(&id)
             .map(|mut job| {
-                job.state = if stopped {
-                    JobState::Stopped
-                } else if error.is_some() {
-                    JobState::Failed
-                } else {
-                    JobState::Finished
-                };
+                job.state = state;
                 job.error = error;
                 job
             });
         if let Some(job) = job {
             task_handle.state::<JobChannel>().channel.publish(job);
         }
+        // 广播是给界面的，这条是给批量的。两者都要有：`JobChannel` 只有一条，而它上面正挂着这一次
+        // 作业的进度，批量必须另拿一个终态而不是和界面抢。
+        let _ = finished.send(state);
     }));
-    Ok(id)
+    Ok(Started { id, terminal })
 }
 
 /// 这一次运行该注入什么。

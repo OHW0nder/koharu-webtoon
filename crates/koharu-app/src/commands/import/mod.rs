@@ -49,26 +49,20 @@ pub(super) enum Format {
 }
 
 /// Whether tall images are cut into pages on the way in.
+///
+/// 只有 `Auto` 一种：强制切页原本是编辑器里那个条漫导入入口的选项，而导入现在只从漫画柜走，
+/// 那里由用户在导入前选定章节形态，不需要再为切页单独做一次决定（`docs/series-management-design.md` §1）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Slicing {
     /// Cut an image only when its geometry says it is a webtoon.
     Auto,
-    /// Cut every image that is taller than a single page, whatever its aspect ratio.
-    Forced,
 }
 
 impl Slicing {
-    /// Planner parameters for this mode. Forcing relaxes the geometry gate rather than
-    /// bypassing the planner, so a forced import of an ordinary page still produces exactly
-    /// one page instead of a hand-rolled second cutting path.
+    /// Planner parameters for this mode.
     fn params(self) -> SliceParams {
         match self {
             Self::Auto => SliceParams::default(),
-            Self::Forced => SliceParams {
-                trigger_aspect: 0.0,
-                min_sliceable_height: 0,
-                ..SliceParams::default()
-            },
         }
     }
 }
@@ -729,15 +723,6 @@ mod tests {
             cursor += band.page.height;
         }
         assert_eq!(cursor, 6000);
-
-        // Forcing relaxes the aspect gate without producing a second cutting path: an ordinary
-        // page still arrives whole, because the planner finds no legal cut for it.
-        let forced = import_webtoon(paths, Slicing::Forced, AdBands::default())
-            .expect("import fixtures");
-        assert!(matches!(split(&forced.imported, "page"), Imported::Page(page) if page.height == 1600));
-        assert!(
-            matches!(split(&forced.imported, "chapter"), Imported::Strip { bands, .. } if bands.len() > 1)
-        );
 
         fs::remove_dir_all(page.parent().unwrap()).expect("remove fixture directory");
     }

@@ -28,17 +28,6 @@ use revision::revisioned;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-/// 条漫导入如何处理远高于宽度的图片。
-#[derive(Clone, Copy, Debug, Default, Deserialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum PageImportSlicing {
-    /// 图片自身几何像条漫时才切。这是默认值，普通导入不需要用户做任何决定。
-    #[default]
-    Auto,
-    /// 切所有高于一页的图片，用于长宽比没触到自动门限的条漫。
-    Forced,
-}
-
 /// 承载源图的临时页面在删除前不会出现在任何快照里，因此这个标签只用于日志与调试。
 const CARRIER_LABEL: &str = "strip source";
 

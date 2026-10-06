@@ -46,6 +46,9 @@ use crate::{
 /// 上文旁挂文件的前缀。文件名为 `context-<章序号>.json`，与漫画索引同目录。
 const CONTEXT_FILE_PREFIX: &str = "context-";
 
+/// 上文旁挂文件的后缀。
+const CONTEXT_FILE_SUFFIX: &str = ".json";
+
 /// 渲染一段注入内容需要的全部输入。
 ///
 /// 全部按值收进来：这个函数不读文件也不读场景，所以它能在没有项目、场景与配置的环境里单测。
@@ -344,7 +347,54 @@ pub(crate) fn prior_chapter_context(snapshot: &Snapshot, pages: u32) -> Vec<Vec<
 /// 按目标章而不是处理顺序命名：语义上的「前文」由作品结构决定，24 章的前文必定来自 23 章，即使这次批量
 /// 只处理了 24 章（`koharu-glossary-design.md` §2.4）。
 fn context_path(directory: &Path, seq: u32) -> std::path::PathBuf {
-    directory.join(format!("{CONTEXT_FILE_PREFIX}{seq}.json"))
+    directory.join(format!("{CONTEXT_FILE_PREFIX}{seq}{CONTEXT_FILE_SUFFIX}"))
+}
+
+/// 从旁挂文件名解出它服务的那一章的序号。不是上下文文件就返回 `None`，所以同目录下别的文件
+/// （比如 `context-notes.txt`）不会被误当成一个序号。
+///
+/// 与 [`context_path`] 对称：写的时候按 `context-<序号>.json` 拼，读回来就按同一个形状拆。少了后缀
+/// 这一半，`"23.json"` 会解析失败然后被当成「不是上下文文件」，于是没有任何一个文件被清理。
+fn context_seq(name: &str) -> Option<u32> {
+    name.strip_prefix(CONTEXT_FILE_PREFIX)?
+        .strip_suffix(CONTEXT_FILE_SUFFIX)?
+        .parse()
+        .ok()
+}
+
+/// 丢弃某章之后的上文旁挂文件。
+///
+/// `context-<N>.json` 存的是**N 章上一章**末尾的译文，所以删掉序号 S 的章之后，N > S 的文件来源
+/// 已不存在或即将被替换：留着它们，新章还没建好项目时（`Assets::collect` 打不开就会跳过）读到的就是
+/// 一份陈旧基线，而陈旧的上文比没有上文更坏——它会让译文接着一个已经被删掉的写法往下写。
+///
+/// **S 自己那份保留。** 它来自 S 的上一章，而上一章没动，正是重新导入的 S 章要用的前文。删掉它会让
+/// 重导的这一章在首次运行前没有上文，哪怕用户只是单独重翻这一章。
+pub(crate) fn discard_prior_context_after(directory: &Path, seq: u32) -> Result<()> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        // 漫画目录不存在意味着索引已经没了，这条命令不会走到；真走到就当无事发生。
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        // 拥有这个名字：`file_name()` 交出的是 `OsString`，借用的 `&str` 会跟着临时值一起掉。
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(target) = context_seq(&name) else {
+            continue;
+        };
+        if target > seq {
+            let path = entry.path();
+            // 派生数据，删不掉不算失败：下一次预扫描会重写它。
+            if let Err(error) = fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(%error, path = %path.display(), "failed to discard a stale context file");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 读一部漫画为某章准备的上文。文件不存在是合法状态，返回空。
@@ -643,6 +693,62 @@ mod tests {
         fs::write(directory.join("context-24.json"), b"{ not json").expect("write broken");
         assert!(load_prior_context(&directory, 24).is_empty(), "a broken file degrades quietly");
         assert!(!directory.join("context-24.json").exists(), "and is discarded");
+
+        fs::remove_dir_all(&directory).expect("remove fixture");
+    }
+
+    #[test]
+    fn dropping_a_chapter_keeps_only_the_context_it_invalidated() {
+        let directory = std::env::temp_dir().join(format!(
+            "koharu-context-cascade-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).expect("create fixture");
+
+        for seq in [21, 22, 23, 24] {
+            save_prior_context(&directory, seq, &[vec![pair("前", "before")]]).expect("save");
+        }
+        // 与上下文同名的邻居不是旁挂文件，不能被误删。
+        fs::write(directory.join("context-notes.txt"), b"mine").expect("write a bystander");
+
+        // 删掉第 22 章。`context-<N>.json` 装的是 N 章上一章的译文，所以 23 与 24 的来源已失效，
+        // 而 22 自己那份来自仍然存在的 21 章——重新导入的 22 章要靠它取前文。
+        let own = load_prior_context(&directory, 22);
+        discard_prior_context_after(&directory, 22).expect("discard");
+        assert!(
+            !directory.join("context-23.json").exists(),
+            "the successor's baseline came from the dropped chapter"
+        );
+        assert!(!directory.join("context-24.json").exists(), "and so does everything after it");
+        assert!(
+            directory.join("context-21.json").is_file(),
+            "21's baseline came from 20, and 21 itself is still there"
+        );
+        assert!(
+            load_prior_context(&directory, 22) == own,
+            "the re-imported chapter reads its own file, so the deletion must leave it intact"
+        );
+        assert!(directory.join("context-notes.txt").is_file(), "a bystander file is not a context");
+
+        // 删掉开头那一章是同一件事的镜像：它之后全都失效，它自己那份来自仍然存在的上一章。
+        for seq in [21, 22, 23, 24] {
+            save_prior_context(&directory, seq, &[vec![pair("前", "before")]]).expect("save");
+        }
+        discard_prior_context_after(&directory, 21).expect("discard");
+        for seq in [22, 23, 24] {
+            assert!(
+                !directory.join(format!("{CONTEXT_FILE_PREFIX}{seq}{CONTEXT_FILE_SUFFIX}")).exists(),
+                "everything after the dropped chapter"
+            );
+        }
+        assert!(
+            directory.join(format!("{CONTEXT_FILE_PREFIX}21{CONTEXT_FILE_SUFFIX}")).is_file(),
+            "21's own baseline came from 20, which is still there"
+        );
 
         fs::remove_dir_all(&directory).expect("remove fixture");
     }
