@@ -1055,7 +1055,7 @@ describe('greenfield editor', () => {
     await user.click(language)
     await user.click(await screen.findByRole('option', { name: 'Japanese' }))
     const instructions = screen.getByRole('textbox', { name: 'Translation instructions' })
-    expect(instructions).toHaveClass('max-h-20', 'overflow-y-auto')
+    expect(instructions).toHaveClass('field-sizing-fixed', 'overflow-y-auto')
     await user.type(instructions, 'Keep character names unchanged.')
     expect(screen.queryByRole('button', { name: 'Apply output' })).not.toBeInTheDocument()
 
