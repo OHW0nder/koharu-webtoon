@@ -580,7 +580,13 @@
     "importing": "İçe aktarılıyor…",
     "oneshot": "Tek cilt",
     "progress": "{{done}} / {{total}} bölüm",
-    "title": "Raf"
+    "title": "Raf",
+    "orphanedTitle": "Orphaned projects",
+    "orphanedDescription": "Left behind by an import that failed or a deleted index. They cannot be opened, only cleared.",
+    "orphanedDelete": "Delete the orphaned project {{name}}",
+    "orphanedDeleteTitle": "Delete “{{name}}”?",
+    "orphanedDeleteDescription": "No series claims this project, so nothing in the app can open it. Deleting cannot be undone.",
+    "orphanedDeleteConfirm": "Delete"
   },
   "start": {
     "create": "Oluştur",

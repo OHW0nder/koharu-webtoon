@@ -131,6 +131,24 @@ export const commands = {
 	 */
 	deleteSeries: (id: string) => __TAURI_INVOKE<null>("delete_series", { id }),
 	/**
+	 *  列出没有任何漫画认领的章项目。
+	 * 
+	 *  **「未认领」不是一类合法对象，而是残骸。** 每个项目都恰好属于一部漫画的一个章
+	 *  （`docs/series-management-design.md` §1），所以能被列出来的只有两种来源：导入在写索引之前
+	 *  中断了，或者索引被手工删掉了。它们进不了漫画柜，也没有别的入口能删——正是这里补上的那个。
+	 * 
+	 *  叫「孤立项目」而不是「未分组项目」：后者听起来像一个可以继续编辑的地方，而这里的东西没有
+	 *  主人，只能清理掉。
+	 */
+	listOrphanedProjects: () => __TAURI_INVOKE<ProjectSummary[]>("list_orphaned_projects"),
+	/**
+	 *  删掉一个孤立项目。
+	 * 
+	 *  守卫是它确实孤立：被认领的项目必须先从它那一章删掉，否则索引里会留下一个打不开的章条目，
+	 *  而那正是这个入口最初要收拾的烂摊子，不该由它再制造一次。
+	 */
+	deleteOrphanedProject: (name: string) => __TAURI_INVOKE<null>("delete_orphaned_project", { name }),
+	/**
 	 *  重新指定源目录。
 	 * 
 	 *  **只换目录，不自动导入。** 换源之后新目录里的章名可能与已登记的 `source` 撞名，而自动导入会把正在
@@ -669,6 +687,10 @@ export type ProjectInfo = {
 	active_page: EntityId | null,
 	can_undo: boolean,
 	can_redo: boolean,
+};
+
+export type ProjectSummary = {
+	name: string,
 };
 
 export type Provider = "local" | "openai" | "gemini" | "claude" | "grok" | "minimax" | "deepseek" | "openai-compatible" | "openrouter" | "lm-studio" | "deepl" | "google-cloud-translation" | "caiyun";

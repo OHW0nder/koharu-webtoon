@@ -218,6 +218,35 @@ export function useDeleteSeriesChapter(id: string) {
   }
 }
 
+/**
+ * Projects no series claims. These are not a category of work: every project belongs to exactly
+ * one chapter of one series, so anything listed here is debris from an import that failed before
+ * it wrote its index, or from an index the user removed by hand.
+ */
+export function useOrphanedProjects(enabled = true) {
+  return useQuery({
+    queryKey: [...seriesKey, 'orphaned'],
+    queryFn: () => call(commands.listOrphanedProjects),
+    enabled,
+  })
+}
+
+export function useDeleteOrphanedProject() {
+  const mutation = useMutation({
+    mutationKey: ['delete-orphaned-project'],
+    mutationFn: (name: string) => call(commands.deleteOrphanedProject, name),
+    onSuccess: () => {
+      // The set is derived from the difference between the projects on disk and the chapter
+      // entries in every index, so deleting one changes it without touching any series.
+      void refresh([...seriesKey, 'orphaned'])
+    },
+  })
+  return {
+    deleteOrphan: mutation.mutateAsync,
+    deletingOrphan: useIsMutating({ mutationKey: ['delete-orphaned-project'] }) > 0,
+  }
+}
+
 export function useDeleteSeries() {
   const mutation = useMutation({
     mutationKey: ['delete-series'],

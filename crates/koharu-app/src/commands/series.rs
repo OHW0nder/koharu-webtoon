@@ -30,7 +30,7 @@ use super::{
     lifecycle::{close_current_project, replace_project},
     output::{ExportFormat, export_snapshot},
     processing::{JobChannel, Processing, Subject, start_job},
-    project::{CurrentProject, ProjectLibrary},
+    project::{CurrentProject, ProjectLibrary, ProjectSummary},
     reject_import_while_processing, reject_settings_while_processing,
 };
 use crate::injection;
@@ -521,6 +521,18 @@ impl SeriesLibrary {
         Ok(entries.into_iter().map(|(_, series)| series.into()).collect())
     }
 
+    /// 全部漫画已认领的章项目名。
+    ///
+    /// 章项目与漫画共用项目根目录、同一套 `.khrproj` 实体，所以「有没有主人」完全取决于索引
+    /// 里有没有它。与漫画索引一比，差集就是孤立项目（见 [`list_orphaned_projects`]）。
+    pub(crate) fn claimed_projects(&self) -> Result<BTreeSet<String>> {
+        Ok(self
+            .indices()?
+            .into_iter()
+            .flat_map(|series| series.chapters.into_iter().map(|chapter| chapter.project))
+            .collect())
+    }
+
     /// 反查这个项目属于哪部漫画。
     ///
     /// 章在索引里只记项目名，所以归属就是一次字符串匹配。每个项目都属于且只属于一部漫画
@@ -896,18 +908,26 @@ pub(crate) async fn import_series_chapter(
     .await?;
     let project_name = format!("{stem} Ch{seq}");
     let mut project = projects.create(&project_name).await?;
-    report_ad_bands(&series.id, &ad_bands);
-    import::apply(&mut project, pages).await?;
-
-    series.chapters.push(SeriesChapter {
-        seq,
-        title: name.clone(),
-        project: project_name,
-        source: Some(name),
-        kind,
-        status: ChapterStatus::Ready,
-    });
-    library.write(&series)?;
+    let outcome = async {
+        report_ad_bands(&series.id, &ad_bands);
+        import::apply(&mut project, pages).await?;
+        series.chapters.push(SeriesChapter {
+            seq,
+            title: name.clone(),
+            project: project_name.clone(),
+            source: Some(name.clone()),
+            kind,
+            status: ChapterStatus::Ready,
+        });
+        library.write(&series)
+    }
+    .await;
+    if let Err(error) = outcome {
+        // 项目已经建好而索引没写进去，这一章就成了没有主人的残骸；它甚至进不了候选列表，
+        // 所以重试会撞上同名项目。删掉它，失败的那一趟才真的没有留下东西。
+        rollback_projects(&projects, std::slice::from_ref(&project_name)).await;
+        return Err(error.into());
+    }
     Ok(series)
 }
 
@@ -1017,6 +1037,48 @@ pub(crate) async fn delete_series(
     Ok(())
 }
 
+/// 列出没有任何漫画认领的章项目。
+///
+/// **「未认领」不是一类合法对象，而是残骸。** 每个项目都恰好属于一部漫画的一个章
+/// （`docs/series-management-design.md` §1），所以能被列出来的只有两种来源：导入在写索引之前
+/// 中断了，或者索引被手工删掉了。它们进不了漫画柜，也没有别的入口能删——正是这里补上的那个。
+///
+/// 叫「孤立项目」而不是「未分组项目」：后者听起来像一个可以继续编辑的地方，而这里的东西没有
+/// 主人，只能清理掉。
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn list_orphaned_projects(
+    projects: State<'_, ProjectLibrary>,
+    series: State<'_, SeriesLibrary>,
+) -> std::result::Result<Vec<ProjectSummary>, Error> {
+    let claimed = series.claimed_projects()?;
+    let orphans = projects
+        .list()?
+        .into_iter()
+        .filter(|project| !claimed.contains(&project.name))
+        .collect();
+    Ok(orphans)
+}
+
+/// 删掉一个孤立项目。
+///
+/// 守卫是它确实孤立：被认领的项目必须先从它那一章删掉，否则索引里会留下一个打不开的章条目，
+/// 而那正是这个入口最初要收拾的烂摊子，不该由它再制造一次。
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn delete_orphaned_project(
+    name: String,
+    projects: State<'_, ProjectLibrary>,
+    series: State<'_, SeriesLibrary>,
+) -> std::result::Result<(), Error> {
+    if series.owning_series(&name)?.is_some() {
+        return Err(anyhow::anyhow!("{name} belongs to a series; delete that chapter instead").into());
+    }
+    projects.delete(&name)?;
+    tracing::info!(project = %name, "deleted an orphaned project");
+    Ok(())
+}
+
 /// 重新指定源目录。
 ///
 /// **只换目录，不自动导入。** 换源之后新目录里的章名可能与已登记的 `source` 撞名，而自动导入会把正在
@@ -1114,8 +1176,44 @@ pub(crate) async fn import_series(
     // 导入循环读的就是这份设置，所以对话框给的高度在循环开始前就位。
     planned.settings.ad = ad;
 
+    let mut created = Vec::new();
+    let outcome = build_chapter_projects(&projects, &planned, kind).await;
+    match outcome {
+        Ok(names) => created = names,
+        Err(error) => {
+            // 建了一半的项目没有被任何索引认领，而未被认领的项目已经不是一类合法对象。
+            // 不回滚的话它们既进不了漫画柜、也没有别的入口能删，于是永久留在盘上。
+            let error = error.into();
+            rollback_projects(&projects, &created).await;
+            return Err(error);
+        }
+    }
+
+    let mut series = planned;
+    for chapter in &mut series.chapters {
+        chapter.status = ChapterStatus::Ready;
+    }
+    // 索引写失败同样要回滚：项目已经全部建好，此时它们同样没有主人。
+    if let Err(error) = library.write(&series) {
+        rollback_projects(&projects, &created).await;
+        return Err(error.into());
+    }
+    Ok(series)
+}
+
+/// 逐章建项目，交出已经建成的那些名字。
+///
+/// 建成功一个就登记一个，所以调用方拿到的清单恰好覆盖「已经落盘、因此需要回滚」的范围。
+/// 切页与导入本身都可能失败（磁盘满、源文件被占用），而失败点在登记之后，所以登记必须紧跟
+/// 在 `create` 成功之后而不是攒到最后。
+async fn build_chapter_projects(
+    projects: &ProjectLibrary,
+    planned: &Series,
+    kind: ChapterKind,
+) -> Result<Vec<String>> {
+    let mut created = Vec::new();
     for chapter in &planned.chapters {
-        let Some(directory) = resolve_source(&planned, chapter) else {
+        let Some(directory) = resolve_source(planned, chapter) else {
             continue;
         };
         let files = import::collect_importable(&directory)?;
@@ -1133,17 +1231,31 @@ pub(crate) async fn import_series(
         })
         .await?;
         let mut project = projects.create(&chapter.project).await?;
+        created.push(chapter.project.clone());
         report_ad_bands(&planned.id, &ad_bands);
         import::apply(&mut project, pages).await?;
         tracing::info!(series = %planned.id, chapter = %chapter.project, "imported a chapter");
     }
+    Ok(created)
+}
 
-    let mut series = planned;
-    for chapter in &mut series.chapters {
-        chapter.status = ChapterStatus::Ready;
+/// 删掉这一趟已经建出来的章项目。
+///
+/// **删不掉的只记日志。** 主错误才是用户要解决的那一个，而一个残留目录不该盖掉它；何况回滚
+/// 本身失败时，用户仍然有一条路：漫画柜里那个「孤立项目」入口（`list_orphaned_projects`）正是
+/// 为这些残骸准备的。
+async fn rollback_projects(projects: &ProjectLibrary, created: &[String]) {
+    for name in created.iter().rev() {
+        let library = projects.clone();
+        let owned = name.clone();
+        match tokio::task::spawn_blocking(move || library.delete(&owned)).await {
+            Ok(Ok(())) => tracing::warn!(project = %name, "rolled back a chapter project"),
+            Ok(Err(error)) => {
+                tracing::error!(project = %name, %error, "could not roll back a chapter project")
+            }
+            Err(error) => tracing::error!(project = %name, %error, "the rollback task was dropped"),
+        }
     }
-    library.write(&series)?;
-    Ok(series)
 }
 
 /// Works out what a folder holds before anything is written: whether it is a serial or a single
@@ -1383,6 +1495,44 @@ mod tests {
 
     fn touch(path: &Path) {
         fs::write(path, b"x").expect("write fixture file");
+    }
+
+    /// 造一个项目目录：`ProjectLibrary::list` 认的是 `.khrproj` 后缀加 `state-*.khr`。
+    fn project_fixture(root: &Path, name: &str) {
+        let directory = root.join(format!("{name}.khrproj"));
+        fs::create_dir_all(&directory).expect("create project directory");
+        touch(&directory.join("state-a.khr"));
+    }
+
+    #[test]
+    fn a_project_no_series_claims_is_reported_as_orphaned() {
+        // 导入在写索引之前中断，或者索引被手工删掉，都会留下这种项目：它不被任何漫画认领，
+        // 于是进不了漫画柜，也没有任何别的入口能删它。
+        let root = fixture("orphans");
+        let library = SeriesLibrary { root: root.clone() };
+        for name in ["Demo Title Ch1", "Demo Title Ch2", "Blue Archive Ch1"] {
+            project_fixture(&root, name);
+        }
+
+        // 一部认领了前两章的漫画：索引写成之后它们就不再是残骸。
+        let source = root.join("Demo Title");
+        fs::create_dir_all(source.join("Ch1")).expect("create chapter directory");
+        fs::create_dir_all(source.join("Ch2")).expect("create chapter directory");
+        touch(&source.join("Ch1").join("001.jpg"));
+        touch(&source.join("Ch2").join("001.jpg"));
+        let mut series = plan_series(&library, &source, ChapterKind::Manga).expect("plan a series");
+        series.chapters.truncate(2);
+        library.write(&series).expect("write the index");
+
+        let claimed = library.claimed_projects().expect("collect claimed");
+        assert!(claimed.contains("Demo Title Ch1"));
+        assert!(claimed.contains("Demo Title Ch2"));
+        assert!(
+            !claimed.contains("Blue Archive Ch1"),
+            "a project no index names is an orphan, not a chapter"
+        );
+
+        fs::remove_dir_all(&root).expect("remove fixture directory");
     }
 
     #[test]

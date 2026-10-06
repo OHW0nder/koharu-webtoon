@@ -580,7 +580,13 @@
     "importing": "正在导入…",
     "oneshot": "单行本",
     "progress": "{{done}} / {{total}} 章",
-    "title": "漫画柜"
+    "title": "漫画柜",
+    "orphanedTitle": "孤立项目",
+    "orphanedDescription": "导入中断或索引被删除后留下的项目，无法打开，只能清理。",
+    "orphanedDelete": "删除孤立项目 {{name}}",
+    "orphanedDeleteTitle": "删除“{{name}}”？",
+    "orphanedDeleteDescription": "这个项目没有任何漫画认领，其内容无法从应用内打开。删除后无法撤销。",
+    "orphanedDeleteConfirm": "删除"
   },
   "start": {
     "create": "创建",

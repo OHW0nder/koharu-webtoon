@@ -113,6 +113,8 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             series::import_series_chapter,
             series::delete_series_chapter,
             series::delete_series,
+            series::list_orphaned_projects,
+            series::delete_orphaned_project,
             series::set_series_source,
             series::rename_series,
             series::process_series_chapters,

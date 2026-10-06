@@ -580,7 +580,13 @@
     "importing": "正在匯入…",
     "oneshot": "單行本",
     "progress": "{{done}} / {{total}} 章",
-    "title": "漫畫櫃"
+    "title": "漫畫櫃",
+    "orphanedTitle": "孤立專案",
+    "orphanedDescription": "匯入中斷或索引被刪除後留下的專案，無法開啟，只能清理。",
+    "orphanedDelete": "刪除孤立專案 {{name}}",
+    "orphanedDeleteTitle": "刪除「{{name}}」？",
+    "orphanedDeleteDescription": "這個專案沒有任何漫畫認領，其內容無法從應用內開啟。刪除後無法復原。",
+    "orphanedDeleteConfirm": "刪除"
   },
   "start": {
     "create": "建立",
