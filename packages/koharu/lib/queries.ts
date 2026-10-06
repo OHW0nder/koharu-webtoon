@@ -124,29 +124,14 @@ export function useCommand<Args extends unknown[], Result>(
   return { run: (...args: Args) => mutation.mutate(args), busy }
 }
 
-export function useImportPages() {
-  const { run, busy } = useCommand(['import-pages'], commands.import, 'navigator.importing', () =>
-    refresh(projectKey, pagesKey, pageKey),
-  )
-  return { importPages: run, importing: busy }
-}
-
-export function useImportWebtoonPages() {
-  const { run, busy } = useCommand(
-    ['import-webtoon-pages'],
-    commands.importWebtoon,
-    'navigator.importing',
-    () => refresh(projectKey, pagesKey, pageKey),
-  )
-  return { importWebtoonPages: run, importing: busy }
-}
-
 export function useSeries() {
   return useQuery(seriesQuery)
 }
 
-export function useSeriesDetail(id: string) {
-  return useQuery(seriesDetailQuery(id))
+export function useSeriesDetail(id: string, enabled = true) {
+  // The editor keeps a chapter open without knowing its series, so it asks with a `null` series
+  // before the first jump. Letting that query run would read a series that does not exist.
+  return useQuery({ ...seriesDetailQuery(id), enabled })
 }
 
 export function useSeriesSettings(id: string) {
@@ -213,6 +198,52 @@ export function useSeriesCandidates(id: string) {
     queryKey: [...seriesDetailKey(id), 'candidates'],
     queryFn: () => call(commands.scanSeriesSource, id),
   })
+}
+
+/** Deleting a chapter also deletes its project, so the cached candidate list is stale afterwards:
+ * the dropped directory is unregistered and becomes importable again. */
+export function useDeleteSeriesChapter(id: string) {
+  const mutation = useMutation({
+    mutationKey: ['delete-series-chapter', id],
+    mutationFn: (project: string) => call(commands.deleteSeriesChapter, id, project),
+    onSuccess: (series) => {
+      queryClient.setQueryData(seriesDetailKey(id), series)
+      // The shelf shows the done/total ratio, so the chapter count changed under it too.
+      void refresh(seriesKey)
+    },
+  })
+  return {
+    deleteChapter: mutation.mutateAsync,
+    deletingChapter: useIsMutating({ mutationKey: ['delete-series-chapter', id] }) > 0,
+  }
+}
+
+export function useDeleteSeries() {
+  const mutation = useMutation({
+    mutationKey: ['delete-series'],
+    mutationFn: (id: string) => call(commands.deleteSeries, id),
+  })
+  return {
+    deleteSeries: mutation.mutateAsync,
+    deletingSeries: useIsMutating({ mutationKey: ['delete-series'] }) > 0,
+  }
+}
+
+/** Only swaps the folder; the new chapters stay candidates until the user picks them, because the
+ *  names in the new folder may collide with the ones already registered. */
+export function useSetSeriesSource(id: string) {
+  const mutation = useMutation({
+    mutationKey: ['set-series-source', id],
+    mutationFn: () => call(commands.setSeriesSource, id),
+    onSuccess: (series) => {
+      queryClient.setQueryData(seriesDetailKey(id), series)
+      void refresh([...seriesDetailKey(id), 'candidates'], seriesKey)
+    },
+  })
+  return {
+    setSource: mutation.mutateAsync,
+    settingSource: useIsMutating({ mutationKey: ['set-series-source', id] }) > 0,
+  }
 }
 
 export function useImportSeriesChapter(id: string) {

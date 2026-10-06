@@ -283,12 +283,6 @@
     "emptyDescription": "匯入影像檔案或資料夾以新增頁面。",
     "emptyTitle": "尚無頁面",
     "filter": "篩選頁面",
-    "importAction": "匯入",
-    "importFiles": "檔案…",
-    "importFolder": "資料夾…",
-    "importWebtoon": "條漫資料夾…",
-    "importing": "正在匯入頁面…",
-    "importingAction": "正在匯入…",
     "layerCount": "{{count}} 個圖層",
     "layerCount_one": "{{count}} 個圖層",
     "layerCount_other": "{{count}} 個圖層",
@@ -299,7 +293,9 @@
     "rename": "重新命名",
     "renameDescription": "為此頁面選擇新名稱。",
     "renameTitle": "重新命名頁面",
-    "selected": "已選擇 {{count}}"
+    "selected": "已選擇 {{count}}",
+    "previousChapter": "上一章",
+    "nextChapter": "下一章"
   },
   "outputPicker": {
     "instructions": "翻譯指示",
@@ -536,11 +532,6 @@
     "fileCount": "{{count}} 個檔案",
     "importChapter": "匯入新章",
     "noCandidates": "來源目錄裡沒有新章節",
-    "pipeline": {
-      "full": "完整流程",
-      "throughOcr": "偵測、OCR、翻譯",
-      "translateOnly": "僅翻譯"
-    },
     "run": {
       "summary": "符合 {{matched}} 筆術語",
       "unsupported": "目前的服務提供者不接受提示指令，因此這些內容都沒有傳給模型。"
@@ -559,24 +550,37 @@
       "done": "已完成",
       "pending": "待匯入",
       "ready": "就緒"
-    }
+    },
+    "process": "處理",
+    "processRun": "開始處理",
+    "stageAll": "全選",
+    "stageNone": "清空",
+    "moreActions": "更多操作",
+    "sourceFolder": "來源目錄",
+    "sourceFolderUnset": "未設定",
+    "sourceFolderChange": "重新指定來源目錄…",
+    "deleteChapter": "刪除 {{name}}",
+    "deleteChapterTitle": "刪除「{{name}}」？",
+    "deleteChapterDescription": "這一章的譯文與匯出檔案會被永久刪除。序號會空出來，重新匯入同一話會拿回原來的位置，上文也就仍然來自它前面那一章。",
+    "deleteChapterConfirm": "刪除",
+    "deleteChaptersTitle": "刪除選中的 {{count}} 章？",
+    "deleteChaptersDescription": "這些章的譯文與匯出檔案會被永久刪除。序號會空出來，重新匯入會按順序補回這些位置。",
+    "deleteSelected": "刪除所選 {{count}} 章",
+    "deleteSeries": "刪除這部漫畫",
+    "deleteSeriesTitle": "刪除這部漫畫？",
+    "deleteSeriesDescription": "全部章節、譯文、匯出檔案，以及這部漫畫的術語表與設定都會被永久刪除。來源目錄裡的檔案不受影響，但已經譯好的內容無法從它們重建。",
+    "deleteSeriesConfirm": "永久刪除"
   },
   "shelf": {
-    "blankPlaceholder": "空白專案名稱",
     "description": "按漫畫與章節管理翻譯專案",
     "emptyDescription": "匯入一個資料夾開始：含子目錄就是連載，扁平目錄就是單行本",
     "emptyTitle": "還沒有漫畫",
     "import": "匯入漫畫",
     "importHint": "在漫畫櫃裡匯入這一章",
-    "importManga": "頁漫資料夾…",
     "importing": "正在匯入…",
-    "importWebtoon": "條漫資料夾…",
-    "newBlank": "新增",
     "oneshot": "單行本",
     "progress": "{{done}} / {{total}} 章",
-    "title": "漫畫櫃",
-    "ungrouped": "未分組專案",
-    "ungroupedEmpty": "沒有未歸屬任何漫畫的專案"
+    "title": "漫畫櫃"
   },
   "start": {
     "create": "建立",

@@ -3,104 +3,55 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { StartView } from '@/components/start/StartView'
-import { queryClient, useProject } from '@/lib/queries'
+import { queryClient } from '@/lib/queries'
+import { useKoharuStore } from '@/lib/store'
 import { commands } from '@koharu/bridge/protocol'
 
-function ProjectFlow() {
-  const project = useProject().data
-  return project ? <p>Opened {project.name}</p> : <StartView />
-}
+/** 漫画柜是这一层唯一的入口：项目不再能凭空创建，所以这里没有「新建空项目」可测。 */
+describe('StartView', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    useKoharuStore.setState({ seriesId: null })
+  })
 
-function renderProjectFlow() {
+  it('lists every series with its progress', async () => {
+    vi.spyOn(commands, 'listSeries').mockResolvedValue([
+      { id: 'Demo Title', title: 'Demo Title', serial: true, cover: null, chapters: 24, done: 12 },
+      {
+        id: 'Blue Archive',
+        title: 'Blue Archive',
+        serial: false,
+        cover: null,
+        chapters: 1,
+        done: 0,
+      },
+    ])
+    renderShelf()
+
+    expect(await screen.findByText('Demo Title')).toBeInTheDocument()
+    // 进度是「已完成 / 总数」，所以总数也是用户判断一部漫画缺了多少章的依据。
+    expect(screen.getByText(/12\s*\/\s*24/)).toBeInTheDocument()
+    expect(screen.getByText('Blue Archive')).toBeInTheDocument()
+  })
+
+  it('opens the chapter list of the series that was clicked', async () => {
+    vi.spyOn(commands, 'listSeries').mockResolvedValue([
+      { id: 'Demo Title', title: 'Demo Title', serial: true, cover: null, chapters: 24, done: 12 },
+    ])
+    renderShelf()
+
+    const card = (await screen.findByText('Demo Title')).closest('button')
+    if (!card) throw new Error('shelf card is not interactive')
+    fireEvent.click(card)
+
+    await waitFor(() => expect(useKoharuStore.getState().seriesId).toBe('Demo Title'))
+  })
+})
+
+function renderShelf() {
   return render(
     <QueryClientProvider client={queryClient}>
-      <ProjectFlow />
+      <StartView />
     </QueryClientProvider>,
   )
 }
-
-describe('StartView', () => {
-  afterEach(() => vi.restoreAllMocks())
-
-  it('creates a managed project by name', async () => {
-    let opened = false
-    vi.spyOn(commands, 'getProject').mockImplementation(async () =>
-      opened
-        ? {
-            name: 'Volume 1',
-            revision: 0,
-            active_page: null,
-            can_undo: false,
-            can_redo: false,
-          }
-        : null,
-    )
-    vi.spyOn(commands, 'listProjects').mockResolvedValue([])
-    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
-    const create = vi.spyOn(commands, 'createProject').mockImplementation(async () => {
-      opened = true
-      return null
-    })
-    renderProjectFlow()
-    expect(await screen.findByRole('heading', { name: 'Shelf' })).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Blank project name' }), {
-      target: { value: 'Volume 1' },
-    })
-    const createButton = screen.getByRole('button', { name: 'New' })
-    await waitFor(() => expect(createButton).toBeEnabled())
-    fireEvent.click(createButton)
-    await waitFor(() => expect(create).toHaveBeenCalledWith('Volume 1'))
-    expect(await screen.findByText('Opened Volume 1')).toBeInTheDocument()
-  })
-
-  it('opens a managed project without reloading the application', async () => {
-    let opened = false
-    vi.spyOn(commands, 'getProject').mockImplementation(async () =>
-      opened
-        ? {
-            name: 'Blue Archive',
-            revision: 1,
-            active_page: null,
-            can_undo: false,
-            can_redo: false,
-          }
-        : null,
-    )
-    vi.spyOn(commands, 'listProjects').mockResolvedValue([{ name: 'Blue Archive' }])
-    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
-    const open = vi.spyOn(commands, 'openProject').mockImplementation(async () => {
-      opened = true
-      return null
-    })
-    renderProjectFlow()
-
-    const project = (await screen.findByText('Blue Archive')).closest('button')
-    if (!project) throw new Error('project row is not interactive')
-    await waitFor(() => expect(project).toBeEnabled())
-    fireEvent.click(project)
-
-    await waitFor(() => expect(open).toHaveBeenCalledWith('Blue Archive'))
-    expect(await screen.findByText('Opened Blue Archive')).toBeInTheDocument()
-  })
-
-  it('confirms before deleting a managed project', async () => {
-    vi.spyOn(commands, 'listProjects')
-      .mockResolvedValueOnce([{ name: 'Blue Archive' }])
-      .mockResolvedValueOnce([])
-    vi.spyOn(commands, 'listSeries').mockResolvedValue([])
-    const remove = vi.spyOn(commands, 'deleteProject').mockResolvedValue(null)
-    renderProjectFlow()
-
-    const deleteButton = await screen.findByRole('button', { name: 'Delete Blue Archive' })
-    await waitFor(() => expect(deleteButton).toBeEnabled())
-    fireEvent.click(deleteButton)
-
-    expect(screen.getByRole('alertdialog')).toHaveTextContent(
-      'This permanently deletes “Blue Archive” and all of its pages.',
-    )
-    expect(remove).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Delete project' }))
-    await waitFor(() => expect(remove).toHaveBeenCalledWith('Blue Archive'))
-  })
-})

@@ -283,12 +283,6 @@
     "emptyDescription": "画像ファイルまたはフォルダーを読み込んでページを追加します。",
     "emptyTitle": "ページがまだありません",
     "filter": "ページを絞り込む",
-    "importAction": "読み込む",
-    "importFiles": "ファイル…",
-    "importFolder": "フォルダー…",
-    "importWebtoon": "ウェブトゥーンフォルダー…",
-    "importing": "ページを読み込み中…",
-    "importingAction": "読み込み中…",
     "layerCount": "{{count}}レイヤー",
     "layerCount_one": "{{count}}レイヤー",
     "layerCount_other": "{{count}}レイヤー",
@@ -299,7 +293,9 @@
     "rename": "名前を変更",
     "renameDescription": "このページの新しい名前を入力します。",
     "renameTitle": "ページ名を変更",
-    "selected": "{{count}}件選択中"
+    "selected": "{{count}}件選択中",
+    "previousChapter": "Previous chapter",
+    "nextChapter": "Next chapter"
   },
   "outputPicker": {
     "instructions": "翻訳指示",
@@ -536,11 +532,6 @@
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
     "noCandidates": "No new chapters in the source folder",
-    "pipeline": {
-      "full": "Full run",
-      "throughOcr": "Detect, OCR, translate",
-      "translateOnly": "Translate only"
-    },
     "run": {
       "summary": "用語 {{matched}} 件が一致",
       "unsupported": "現在のプロバイダーはプロンプトの指示を受け付けないため、これらの内容はモデルに届いていません。"
@@ -559,24 +550,37 @@
       "done": "完了",
       "pending": "未取込",
       "ready": "準備完了"
-    }
+    },
+    "process": "Process",
+    "processRun": "Run",
+    "stageAll": "All",
+    "stageNone": "None",
+    "moreActions": "More actions",
+    "sourceFolder": "Source folder",
+    "sourceFolderUnset": "Not set",
+    "sourceFolderChange": "Change source folder…",
+    "deleteChapter": "Delete {{name}}",
+    "deleteChapterTitle": "Delete “{{name}}”?",
+    "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
+    "deleteChapterConfirm": "Delete",
+    "deleteChaptersTitle": "Delete the {{count}} selected chapters?",
+    "deleteChaptersDescription": "Their translations and exported files are deleted for good. The numbers are left free, so importing again fills those slots back in order.",
+    "deleteSelected": "Delete {{count}} selected",
+    "deleteSeries": "Delete this series",
+    "deleteSeriesTitle": "Delete this series?",
+    "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
+    "deleteSeriesConfirm": "Delete for good"
   },
   "shelf": {
-    "blankPlaceholder": "空のプロジェクト名",
     "description": "作品と章で翻訳プロジェクトを管理します",
     "emptyDescription": "フォルダーを読み込んでください。サブフォルダーがある場合は連続作品、ない場合は単行本です",
     "emptyTitle": "まだ作品がありません",
     "import": "読み込む",
     "importHint": "本棚からこの章を読み込みます",
-    "importManga": "ページフォルダー…",
     "importing": "読み込み中…",
-    "importWebtoon": "ウェブトゥーンフォルダー…",
-    "newBlank": "新規",
     "oneshot": "単行本",
     "progress": "{{done}} / {{total}} 章",
-    "title": "本棚",
-    "ungrouped": "未分類のプロジェクト",
-    "ungroupedEmpty": "作品に属さないプロジェクトはありません"
+    "title": "本棚"
   },
   "start": {
     "create": "作成",

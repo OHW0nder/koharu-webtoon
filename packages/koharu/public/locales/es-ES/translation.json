@@ -283,12 +283,6 @@
     "emptyDescription": "Importa archivos de imagen o una carpeta para añadir páginas.",
     "emptyTitle": "Aún no hay páginas",
     "filter": "Filtrar páginas",
-    "importAction": "Importar",
-    "importFiles": "Archivos…",
-    "importFolder": "Carpeta…",
-    "importWebtoon": "Carpeta de webtoon…",
-    "importing": "Importando páginas…",
-    "importingAction": "Importando…",
     "layerCount": "{{count}} capas",
     "layerCount_one": "{{count}} capas",
     "layerCount_other": "{{count}} capas",
@@ -299,7 +293,9 @@
     "rename": "Cambiar nombre",
     "renameDescription": "Elige un nombre nuevo para esta página.",
     "renameTitle": "Cambiar nombre de página",
-    "selected": "{{count}} seleccionadas"
+    "selected": "{{count}} seleccionadas",
+    "previousChapter": "Previous chapter",
+    "nextChapter": "Next chapter"
   },
   "outputPicker": {
     "instructions": "Instrucciones de traducción",
@@ -536,11 +532,6 @@
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
     "noCandidates": "No new chapters in the source folder",
-    "pipeline": {
-      "full": "Full run",
-      "throughOcr": "Detect, OCR, translate",
-      "translateOnly": "Translate only"
-    },
     "run": {
       "summary": "{{matched}} términos del glosario coincididos",
       "unsupported": "El proveedor actual no acepta instrucciones en el prompt, así que nada de esto llegó al modelo."
@@ -559,24 +550,37 @@
       "done": "Hecho",
       "pending": "Pendiente",
       "ready": "Listo"
-    }
+    },
+    "process": "Process",
+    "processRun": "Run",
+    "stageAll": "All",
+    "stageNone": "None",
+    "moreActions": "More actions",
+    "sourceFolder": "Source folder",
+    "sourceFolderUnset": "Not set",
+    "sourceFolderChange": "Change source folder…",
+    "deleteChapter": "Delete {{name}}",
+    "deleteChapterTitle": "Delete “{{name}}”?",
+    "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
+    "deleteChapterConfirm": "Delete",
+    "deleteChaptersTitle": "Delete the {{count}} selected chapters?",
+    "deleteChaptersDescription": "Their translations and exported files are deleted for good. The numbers are left free, so importing again fills those slots back in order.",
+    "deleteSelected": "Delete {{count}} selected",
+    "deleteSeries": "Delete this series",
+    "deleteSeriesTitle": "Delete this series?",
+    "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
+    "deleteSeriesConfirm": "Delete for good"
   },
   "shelf": {
-    "blankPlaceholder": "Nombre del proyecto",
     "description": "Proyectos de traducción por serie y capítulo",
     "emptyDescription": "Importa una carpeta: con subcarpetas es una serie, plana es un volumen suelto",
     "emptyTitle": "Todavía no hay series",
     "import": "Importar",
     "importHint": "Importa este capítulo desde la estantería",
-    "importManga": "Carpeta de páginas…",
     "importing": "Importando…",
-    "importWebtoon": "Carpeta de webtoon…",
-    "newBlank": "Nuevo",
     "oneshot": "Suelto",
     "progress": "{{done}} / {{total}} capítulos",
-    "title": "Estantería",
-    "ungrouped": "Proyectos sin grupo",
-    "ungroupedEmpty": "No hay proyectos fuera de una serie"
+    "title": "Estantería"
   },
   "start": {
     "create": "Crear",

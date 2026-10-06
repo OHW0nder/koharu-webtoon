@@ -1,5 +1,6 @@
 'use client'
 
+import { ChapterJump } from '@/components/editor/ChapterJump'
 import { InferenceControl } from '@/components/editor/InferenceControl'
 import { call } from '@/lib/backend'
 import { usePage } from '@/lib/queries'
@@ -31,6 +32,7 @@ export function CanvasCommandBar() {
 
   return (
     <header className='flex h-10 shrink-0 items-center gap-2 border-b border-border/80 bg-[var(--surface-toolbar)] px-2.5'>
+      <ChapterJump />
       <div className='min-w-0 flex-1' />
       <InferenceControl disabled={!page || Boolean(running)} onRun={run} />
     </header>

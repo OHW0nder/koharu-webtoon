@@ -283,12 +283,6 @@
     "emptyDescription": "Import image files or a folder to add pages.",
     "emptyTitle": "No pages yet",
     "filter": "Filter pages",
-    "importAction": "Import",
-    "importFiles": "Files…",
-    "importFolder": "Folder…",
-    "importWebtoon": "Webtoon folder…",
-    "importing": "Importing pages…",
-    "importingAction": "Importing…",
     "layerCount": "{{count}} layers",
     "layerCount_one": "{{count}} layer",
     "layerCount_other": "{{count}} layers",
@@ -299,7 +293,9 @@
     "rename": "Rename",
     "renameDescription": "Choose a new name for this page.",
     "renameTitle": "Rename page",
-    "selected": "{{count}} selected"
+    "selected": "{{count}} selected",
+    "previousChapter": "Previous chapter",
+    "nextChapter": "Next chapter"
   },
   "outputPicker": {
     "instructions": "Translation instructions",
@@ -536,11 +532,6 @@
     "export": "Export",
     "fileCount": "{{count}} files",
     "noCandidates": "No new chapters in the source folder",
-    "pipeline": {
-      "full": "Full run",
-      "throughOcr": "Detect, OCR, translate",
-      "translateOnly": "Translate only"
-    },
     "run": {
       "summary": "Matched {{matched}} glossary terms",
       "unsupported": "The current provider does not accept prompt instructions, so none of this reached the model."
@@ -559,24 +550,37 @@
       "done": "Done",
       "pending": "Pending",
       "ready": "Ready"
-    }
+    },
+    "process": "Process",
+    "processRun": "Run",
+    "stageAll": "All",
+    "stageNone": "None",
+    "moreActions": "More actions",
+    "sourceFolder": "Source folder",
+    "sourceFolderUnset": "Not set",
+    "sourceFolderChange": "Change source folder…",
+    "deleteChapter": "Delete {{name}}",
+    "deleteChapterTitle": "Delete “{{name}}”?",
+    "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
+    "deleteChapterConfirm": "Delete",
+    "deleteChaptersTitle": "Delete the {{count}} selected chapters?",
+    "deleteChaptersDescription": "Their translations and exported files are deleted for good. The numbers are left free, so importing again fills those slots back in order.",
+    "deleteSelected": "Delete {{count}} selected",
+    "deleteSeries": "Delete this series",
+    "deleteSeriesTitle": "Delete this series?",
+    "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
+    "deleteSeriesConfirm": "Delete for good"
   },
   "shelf": {
-    "blankPlaceholder": "Blank project name",
     "description": "Translation projects by series and chapter",
     "emptyDescription": "Import a folder: sub-directories make a serial, a flat folder makes a single volume",
     "emptyTitle": "No series yet",
     "import": "Import",
     "importHint": "Import this chapter from the shelf",
-    "importManga": "Page folder…",
     "importing": "Importing…",
-    "importWebtoon": "Webtoon folder…",
-    "newBlank": "New",
     "oneshot": "Single",
     "progress": "{{done}} / {{total}} chapters",
-    "title": "Shelf",
-    "ungrouped": "Ungrouped projects",
-    "ungroupedEmpty": "No projects outside a series"
+    "title": "Shelf"
   },
   "start": {
     "create": "Create",

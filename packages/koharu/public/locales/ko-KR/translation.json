@@ -283,12 +283,6 @@
     "emptyDescription": "이미지 파일이나 폴더를 가져와 페이지를 추가하세요.",
     "emptyTitle": "아직 페이지가 없습니다",
     "filter": "페이지 필터링",
-    "importAction": "가져오기",
-    "importFiles": "파일…",
-    "importFolder": "폴더…",
-    "importWebtoon": "웹툰 폴더…",
-    "importing": "페이지 가져오는 중…",
-    "importingAction": "가져오는 중…",
     "layerCount": "레이어 {{count}}개",
     "layerCount_one": "레이어 {{count}}개",
     "layerCount_other": "레이어 {{count}}개",
@@ -299,7 +293,9 @@
     "rename": "이름 바꾸기",
     "renameDescription": "이 페이지의 새 이름을 정하세요.",
     "renameTitle": "페이지 이름 바꾸기",
-    "selected": "{{count}}개 선택됨"
+    "selected": "{{count}}개 선택됨",
+    "previousChapter": "Previous chapter",
+    "nextChapter": "Next chapter"
   },
   "outputPicker": {
     "instructions": "번역 지침",
@@ -536,11 +532,6 @@
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
     "noCandidates": "No new chapters in the source folder",
-    "pipeline": {
-      "full": "Full run",
-      "throughOcr": "Detect, OCR, translate",
-      "translateOnly": "Translate only"
-    },
     "run": {
       "summary": "용어 {{matched}}개 일치",
       "unsupported": "현재 제공자는 프롬프트 지침을 받지 않으므로 이 내용이 모델에 전달되지 않았습니다."
@@ -559,24 +550,37 @@
       "done": "완료",
       "pending": "대기",
       "ready": "준비됨"
-    }
+    },
+    "process": "Process",
+    "processRun": "Run",
+    "stageAll": "All",
+    "stageNone": "None",
+    "moreActions": "More actions",
+    "sourceFolder": "Source folder",
+    "sourceFolderUnset": "Not set",
+    "sourceFolderChange": "Change source folder…",
+    "deleteChapter": "Delete {{name}}",
+    "deleteChapterTitle": "Delete “{{name}}”?",
+    "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
+    "deleteChapterConfirm": "Delete",
+    "deleteChaptersTitle": "Delete the {{count}} selected chapters?",
+    "deleteChaptersDescription": "Their translations and exported files are deleted for good. The numbers are left free, so importing again fills those slots back in order.",
+    "deleteSelected": "Delete {{count}} selected",
+    "deleteSeries": "Delete this series",
+    "deleteSeriesTitle": "Delete this series?",
+    "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
+    "deleteSeriesConfirm": "Delete for good"
   },
   "shelf": {
-    "blankPlaceholder": "빈 프로젝트 이름",
     "description": "작품과 화별로 번역 프로젝트를 관리합니다",
     "emptyDescription": "폴더를 가져오세요: 하위 폴더가 있으면 연작, 평면이면 단행본입니다",
     "emptyTitle": "아직 작품이 없습니다",
     "import": "가져오기",
     "importHint": "책장에서 이 화를 가져오세요",
-    "importManga": "페이지 폴더…",
     "importing": "가져오는 중…",
-    "importWebtoon": "웹툰 폴더…",
-    "newBlank": "새로 만들기",
     "oneshot": "단행본",
     "progress": "{{done}} / {{total}} 화",
-    "title": "책장",
-    "ungrouped": "미분류 프로젝트",
-    "ungroupedEmpty": "작품에 속하지 않은 프로젝트가 없습니다"
+    "title": "책장"
   },
   "start": {
     "create": "만들기",

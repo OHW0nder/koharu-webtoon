@@ -283,12 +283,6 @@
     "emptyDescription": "Импортируйте изображения или папку, чтобы добавить страницы.",
     "emptyTitle": "Страниц пока нет",
     "filter": "Фильтровать страницы",
-    "importAction": "Импорт",
-    "importFiles": "Файлы…",
-    "importFolder": "Папка…",
-    "importWebtoon": "Папка вебтона…",
-    "importing": "Импорт страниц…",
-    "importingAction": "Импорт…",
     "layerCount": "Слоёв: {{count}}",
     "layerCount_one": "Слоёв: {{count}}",
     "layerCount_other": "Слоёв: {{count}}",
@@ -299,7 +293,9 @@
     "rename": "Переименовать",
     "renameDescription": "Выберите новое имя для страницы.",
     "renameTitle": "Переименовать страницу",
-    "selected": "Выбрано: {{count}}"
+    "selected": "Выбрано: {{count}}",
+    "previousChapter": "Previous chapter",
+    "nextChapter": "Next chapter"
   },
   "outputPicker": {
     "instructions": "Инструкции по переводу",
@@ -536,11 +532,6 @@
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
     "noCandidates": "No new chapters in the source folder",
-    "pipeline": {
-      "full": "Full run",
-      "throughOcr": "Detect, OCR, translate",
-      "translateOnly": "Translate only"
-    },
     "run": {
       "summary": "Совпало терминов глоссария: {{matched}}",
       "unsupported": "Текущий провайдер не принимает инструкции в промпте, поэтому всё это не дошло до модели."
@@ -559,24 +550,37 @@
       "done": "Готово",
       "pending": "Ожидает",
       "ready": "Готово к работе"
-    }
+    },
+    "process": "Process",
+    "processRun": "Run",
+    "stageAll": "All",
+    "stageNone": "None",
+    "moreActions": "More actions",
+    "sourceFolder": "Source folder",
+    "sourceFolderUnset": "Not set",
+    "sourceFolderChange": "Change source folder…",
+    "deleteChapter": "Delete {{name}}",
+    "deleteChapterTitle": "Delete “{{name}}”?",
+    "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
+    "deleteChapterConfirm": "Delete",
+    "deleteChaptersTitle": "Delete the {{count}} selected chapters?",
+    "deleteChaptersDescription": "Their translations and exported files are deleted for good. The numbers are left free, so importing again fills those slots back in order.",
+    "deleteSelected": "Delete {{count}} selected",
+    "deleteSeries": "Delete this series",
+    "deleteSeriesTitle": "Delete this series?",
+    "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
+    "deleteSeriesConfirm": "Delete for good"
   },
   "shelf": {
-    "blankPlaceholder": "Имя проекта",
     "description": "Проекты перевода по сериям и главам",
     "emptyDescription": "Импортируйте папку: с подпапками это серия, без них — однотомник",
     "emptyTitle": "Серий пока нет",
     "import": "Импорт",
     "importHint": "Импортируйте эту главу с полки",
-    "importManga": "Папка страниц…",
     "importing": "Импорт…",
-    "importWebtoon": "Папка вебтона…",
-    "newBlank": "Создать",
     "oneshot": "Однотомник",
     "progress": "{{done}} / {{total}} глав",
-    "title": "Полка",
-    "ungrouped": "Проекты без серии",
-    "ungroupedEmpty": "Нет проектов вне серий"
+    "title": "Полка"
   },
   "start": {
     "create": "Создать",

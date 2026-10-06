@@ -13,8 +13,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/p
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@koharu/ui/components/tooltip'
 
-import { UngroupedProjects } from './UngroupedProjects'
-
 export function StartView() {
   const { t } = useTranslation()
   const setSettingsOpen = useKoharuStore((state) => state.setSettingsOpen)
@@ -90,8 +88,6 @@ export function StartView() {
           </ul>
         )}
       </section>
-
-      <UngroupedProjects />
     </ScrollArea>
   )
 }

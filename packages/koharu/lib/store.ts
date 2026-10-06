@@ -65,6 +65,11 @@ interface KoharuStore {
   /// user lands after closing a project. It survives opening a chapter so that closing that
   /// chapter returns to the list it came from instead of the shelf.
   seriesId: string | null
+  /// The chapter the editor is currently working on, so the editor can offer its siblings without
+  /// having to work out which series a project belongs to. Every project belongs to exactly one
+  /// chapter of exactly one series, so the pair is enough to look the rest of the series up.
+  /// `null` until a chapter is opened from its own list.
+  chapter: { seriesId: string; project: string } | null
   shortcuts: Shortcuts
   selectPages: (pages: EntityId[]) => void
   showInspector: (section: InspectorSection) => void
@@ -73,6 +78,7 @@ interface KoharuStore {
   setSettingsOpen: (open: boolean) => void
   showSeries: (id: string) => void
   showShelf: () => void
+  showChapter: (chapter: { seriesId: string; project: string }) => void
   selectLayers: (layers: EntityId[]) => void
   setTool: (tool: CanvasTool) => void
   setBrush: (brush: CanvasBrush) => void
@@ -116,6 +122,7 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   processingStages: [...pipelineStages],
   settingsOpen: false,
   seriesId: null,
+  chapter: null,
   shortcuts: defaultShortcuts,
   selectPages: (selectedPages) => set({ selectedPages: [...new Set(selectedPages)] }),
   showInspector: (inspector) => set({ inspector }),
@@ -124,6 +131,7 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   showSeries: (seriesId) => set({ seriesId }),
   showShelf: () => set({ seriesId: null }),
+  showChapter: (chapter) => set({ chapter }),
   selectLayers: (selectedLayers) => set({ selectedLayers: [...new Set(selectedLayers)] }),
   setTool: (tool) => set({ tool }),
   setBrush: (brush) => set({ brush }),

@@ -24,7 +24,6 @@ import {
   commands,
   type CanvasPagePreparation,
   type Page,
-  type PageImportSource,
   type PageSummary,
   type ProjectInfo,
 } from '@koharu/bridge/protocol'
