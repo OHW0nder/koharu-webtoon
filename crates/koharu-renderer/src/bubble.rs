@@ -81,6 +81,27 @@ pub(crate) fn flow_cells(
         .unwrap_or_else(|| anchor_flow_cells(width, height, contour, &anchors))
 }
 
+/// Splits one contour into one polygon per anchor, or `None` when the contour
+/// admits no complete neck decomposition.
+///
+/// Detection derives a balloon's outline from the outer boundary of an instance
+/// mask, and two balloons whose interiors overlap arrive as a single mask with a
+/// single waist-shaped contour. The renderer already recovers those physical
+/// necks to lay text out; detection needs the same decomposition to give each
+/// utterance a balloon of its own instead of routing several of them through one
+/// outline.
+///
+/// Demanding one lobe per anchor is what keeps a genuinely single balloon whole.
+/// A contour with fewer necks than anchors, or one whose anchors straddle a
+/// candidate diagonal, has no decomposition to offer and is returned unchanged by
+/// the caller.
+pub fn split_contour_by_anchors(
+    contour: &[(f32, f32)],
+    anchors: &[(f32, f32)],
+) -> Option<Vec<Vec<(f32, f32)>>> {
+    topological_flow_cells(contour, anchors)
+}
+
 fn topological_flow_cells(
     contour: &[(f32, f32)],
     anchors: &[(f32, f32)],

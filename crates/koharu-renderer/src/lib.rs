@@ -14,6 +14,7 @@ mod shape;
 mod text_renderer;
 mod types;
 
+pub use bubble::split_contour_by_anchors;
 pub use config::TypesettingConfig;
 pub use error::{Error, Result};
 pub use frame::{

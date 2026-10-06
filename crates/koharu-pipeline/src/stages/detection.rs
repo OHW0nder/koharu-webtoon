@@ -17,6 +17,7 @@ use imageproc::{
     geometry::{approximate_polygon_dp, arc_length, contour_area},
     morphology::{close, dilate},
 };
+use koharu_renderer::split_contour_by_anchors;
 // The fit strategy is defined by the model, which owns the geometry it was
 // trained for, but selected by the user, whose configuration this is.
 pub use koharu_ml::koharu_layout_rfdetr_seg_2xl::InputFit;
@@ -51,6 +52,9 @@ const COLOR_CLUSTER_COUNT: usize = 4;
 const MIN_EXTREME_COLOR_PIXELS: u32 = 4;
 const MIN_MEASURED_STROKE_WIDTH: u8 = 2;
 const DIALOGUE_MASK_CONTAINMENT_THRESHOLD: f32 = 0.9;
+/// How much of the smaller of two instance masks the larger one has to cover
+/// before the pair is treated as the same instance twice.
+const DUPLICATE_MASK_OVERLAP_THRESHOLD: f32 = 0.8;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(default)]
@@ -192,8 +196,12 @@ impl Model {
 
 struct DetectedRegion<'a> {
     entity: EntityId,
-    mask: &'a KoharuLayoutMask,
-    area: u32,
+    detection: &'a KoharuLayoutDetection,
+    /// The instance mask's outer boundary, kept because one `bubble` entity can
+    /// be written and later split into one entity per utterance. The written
+    /// geometry cannot be read back off the edit, so the outline `write_region`
+    /// derived has to travel alongside the region.
+    contour: Vec<(f32, f32)>,
 }
 
 struct DetectedText<'a> {
@@ -294,7 +302,7 @@ async fn write_page(
     let image = image.to_rgb8();
     let regions = write_regions(&input.scene, edit, page, &image, &detections, generation)
         .context("failed to write detected regions")?;
-    link_dialogue_regions(edit, &regions, generation)
+    link_dialogue_regions(edit, &regions, page, generation)
         .context("failed to associate detected text with dialogue regions")?;
     write_masks(input, edit, page, &detections, size)
         .await
@@ -392,8 +400,12 @@ fn write_region<'a>(
         return Ok(if detection.label == "bubble" {
             RegionOutput::Bubble(DetectedRegion {
                 entity,
-                mask: &detection.mask,
-                area: detection.area,
+                detection,
+                contour: geometry
+                    .points
+                    .iter()
+                    .map(|point| (point.x as f32, point.y as f32))
+                    .collect(),
             })
         } else {
             RegionOutput::Other
@@ -448,19 +460,137 @@ fn write_region<'a>(
 fn link_dialogue_regions(
     edit: &mut koharu_scene::Edit,
     regions: &PageRegions<'_>,
+    page: EntityId,
     generation: &Generation,
 ) -> Result<()> {
-    for text in &regions.texts {
-        let bubble = containing_bubble(&regions.bubbles, text);
-        if let Some(bubble) = bubble {
-            edit.relate::<Inside>(text.entity, bubble.entity)?;
-            edit.relate::<FlowsIn>(text.layer, bubble.entity)?;
-            write_text_role(edit, text.content, "dev.koharu.text.dialogue", generation)?;
-        } else {
-            edit.relate::<FitsTo>(text.layer, text.entity)?;
+    let owners = resolve_dialogue_owners(edit, regions, page, generation)
+        .context("failed to separate balloons that share one instance mask")?;
+    for (text, owner) in regions.texts.iter().zip(&owners) {
+        match owner {
+            Some(bubble) => {
+                edit.relate::<Inside>(text.entity, *bubble)?;
+                edit.relate::<FlowsIn>(text.layer, *bubble)?;
+                write_text_role(edit, text.content, "dev.koharu.text.dialogue", generation)?;
+            }
+            None => {
+                edit.relate::<FitsTo>(text.layer, text.entity)?;
+            }
         }
     }
     Ok(())
+}
+
+/// Assigns every detected utterance to the balloon that carries it, splitting a
+/// balloon whose mask swallowed more than one whenever the outline still has the
+/// necks to prove it.
+///
+/// Two balloons drawn over each other share one interior, so the mask branch
+/// returns one connected blob and `write_region` gives them one waist-shaped
+/// outline. Left joined, every utterance in them claims that outline, the
+/// renderer has to slice it back apart at layout time, and the inpainting stage
+/// flattens both balloons together with the artwork between them. Splitting here
+/// gives each utterance a real outline instead.
+///
+/// The split is refused unless the outline decomposes into exactly one lobe per
+/// utterance, so a balloon that genuinely holds one utterance — or one whose
+/// outline has no complete neck decomposition — is left as it was detected.
+fn resolve_dialogue_owners(
+    edit: &mut koharu_scene::Edit,
+    regions: &PageRegions<'_>,
+    page: EntityId,
+    generation: &Generation,
+) -> Result<Vec<Option<EntityId>>> {
+    let mut owners = vec![None; regions.texts.len()];
+    let mut utterances: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, text) in regions.texts.iter().enumerate() {
+        let Some(bubble) = containing_bubble(&regions.bubbles, text) else {
+            continue;
+        };
+        let bubble_index = regions
+            .bubbles
+            .iter()
+            .position(|value| value.entity == bubble.entity)
+            .expect("a matched balloon belongs to this page");
+        owners[index] = Some(bubble.entity);
+        utterances.entry(bubble_index).or_default().push(index);
+    }
+
+    for (bubble_index, members) in utterances {
+        let Some(bubble) = regions.bubbles.get(bubble_index) else {
+            continue;
+        };
+        if members.len() < 2 {
+            continue;
+        }
+        let anchors = members
+            .iter()
+            .map(|&index| bounds_center(regions.texts[index].bounds))
+            .collect::<Vec<_>>();
+        let Some(cells) = split_contour_by_anchors(&bubble.contour, &anchors) else {
+            continue;
+        };
+        for (position, cell) in cells.iter().enumerate() {
+            let entity = write_balloon_lobe(edit, page, bubble, cell, position == 0, generation)
+                .context("failed to write a balloon split from a joined mask")?;
+            owners[members[position]] = Some(entity);
+        }
+    }
+    Ok(owners)
+}
+
+/// Writes one lobe of a joined balloon. The first lobe keeps the detected entity
+/// so the region outlives the split with its detection analysis and page order
+/// intact; every later lobe is a sibling carrying the same analysis.
+fn write_balloon_lobe(
+    edit: &mut koharu_scene::Edit,
+    page: EntityId,
+    bubble: &DetectedRegion<'_>,
+    cell: &[(f32, f32)],
+    reuse: bool,
+    generation: &Generation,
+) -> Result<EntityId> {
+    let entity = if reuse {
+        bubble.entity
+    } else {
+        let created = edit.add_entity(page, At::End)?;
+        edit.set(
+            created,
+            &Region {
+                origin: Origin::Generated(generation.clone()),
+                kind: BubbleRegion::kind(),
+                label: Some(bubble.detection.label.clone()),
+            },
+        )?;
+        edit.set(
+            created,
+            &DetectionAnalysis {
+                origin: Origin::Generated(generation.clone()),
+                labels: vec![DetectionLabel {
+                    kind: BubbleRegion::kind(),
+                    confidence: bubble.detection.score,
+                }],
+            },
+        )?;
+        created
+    };
+    edit.set(
+        entity,
+        &Geometry {
+            origin: Origin::User,
+            points: cell
+                .iter()
+                .map(|&(x, y)| Point {
+                    x: f64::from(x),
+                    y: f64::from(y),
+                })
+                .collect(),
+        },
+    )?;
+    Ok(entity)
+}
+
+fn bounds_center([left, top, right, bottom]: [f32; 4]) -> (f32, f32) {
+    ((left + right) * 0.5, (top + bottom) * 0.5)
 }
 
 fn containing_bubble<'regions, 'detections>(
@@ -470,10 +600,10 @@ fn containing_bubble<'regions, 'detections>(
     bubbles
         .iter()
         .filter(|bubble| {
-            mask_containment(bubble.mask, text.mask, text.bounds)
+            mask_containment(&bubble.detection.mask, text.mask, text.bounds)
                 >= DIALOGUE_MASK_CONTAINMENT_THRESHOLD
         })
-        .min_by_key(|bubble| bubble.area)
+        .min_by_key(|bubble| bubble.detection.area)
 }
 
 fn write_text_role(
@@ -1654,7 +1784,8 @@ fn non_maximum_suppression(detections: &mut Vec<KoharuLayoutDetection>, threshol
     for candidate in detections.drain(..) {
         let suppressed = kept.iter().any(|existing: &KoharuLayoutDetection| {
             existing.label == candidate.label
-                && intersection_over_union(existing.bbox, candidate.bbox) >= threshold
+                && (intersection_over_union(existing.bbox, candidate.bbox) >= threshold
+                    || mask_overlap(existing, &candidate) >= DUPLICATE_MASK_OVERLAP_THRESHOLD)
         });
         if !suppressed {
             kept.push(candidate);
@@ -1824,6 +1955,52 @@ fn mask_containment(
     }
 }
 
+/// How much of the smaller of two instance masks the larger one covers.
+///
+/// RF-DETR's own PostProcess keeps every query that clears its class threshold
+/// and leaves duplicate suppression to the consumer, and box IoU is a poor
+/// duplicate signal for this checkpoint: two queries that settle on the same
+/// strokes can straddle different extents, so their boxes stay below any usable
+/// IoU while the masks are nearly the same pixels. That is how a single speech
+/// bubble reaches the scene twice and gets OCR'd, translated and repaired twice.
+/// Two genuinely distinct instances that merely touch — the common case for
+/// overlapping balloons — share only their boundary, so the ratio stays low.
+///
+/// `area` is the nonzero count the processor already measured on the projected
+/// mask, so the denominator costs nothing, and walking only the shared bounding
+/// box keeps a duplicate check proportional to where the two masks meet.
+fn mask_overlap(left: &KoharuLayoutDetection, right: &KoharuLayoutDetection) -> f32 {
+    let smaller = left.area.min(right.area);
+    if smaller == 0 || !valid_mask(&left.mask) || !valid_mask(&right.mask) {
+        return 0.0;
+    }
+    let x = left.mask.x.max(right.mask.x);
+    let y = left.mask.y.max(right.mask.y);
+    let right_edge = left
+        .mask
+        .x
+        .saturating_add(left.mask.width)
+        .min(right.mask.x.saturating_add(right.mask.width));
+    let bottom = left
+        .mask
+        .y
+        .saturating_add(left.mask.height)
+        .min(right.mask.y.saturating_add(right.mask.height));
+    if x >= right_edge || y >= bottom {
+        return 0.0;
+    }
+
+    let mut intersection = 0u32;
+    for row in y..bottom {
+        for column in x..right_edge {
+            intersection += u32::from(
+                left.mask.contains(column, row) && right.mask.contains(column, row),
+            );
+        }
+    }
+    intersection as f32 / smaller as f32
+}
+
 fn intersection_over_union(left: [f32; 4], right: [f32; 4]) -> f32 {
     let intersection = intersection_area(left, right);
     let union = area(left) + area(right) - intersection;
@@ -1852,8 +2029,8 @@ mod tests {
     };
     use koharu_ml::koharu_layout_rfdetr_seg_2xl::{KoharuLayoutDetection, KoharuLayoutMask};
     use koharu_scene::{
-        At, BubbleRegion, FitsTo, FlowsIn, Geometry, Inside, Origin, PageDraft, Session,
-        TextLayout, TextLayoutKind, TextRegion, Typography, WritingMode,
+        At, BubbleRegion, FitsTo, FlowsIn, Geometry, Inside, Origin, PageDraft, Region,
+        RegionSpec, Session, TextLayout, TextLayoutKind, TextRegion, Typography, WritingMode,
     };
 
     use super::{
@@ -1947,6 +2124,12 @@ mod tests {
             pixels: vec![u8::MAX],
         };
         let text_mask = bubble_mask.clone();
+        let bubble_detection = detection_with_mask(
+            "bubble",
+            1.0,
+            [10.0, 10.0, 90.0, 90.0],
+            bubble_mask.clone(),
+        );
         let generation = generation(super::PRODUCER, super::MODEL_ID).unwrap();
         let mut ids = None;
         let patch = session
@@ -1981,8 +2164,13 @@ mod tests {
                     &PageRegions {
                         bubbles: vec![DetectedRegion {
                             entity: bubble,
-                            mask: &bubble_mask,
-                            area: 1,
+                            detection: &bubble_detection,
+                            contour: vec![
+                                (10.0, 10.0),
+                                (90.0, 10.0),
+                                (90.0, 90.0),
+                                (10.0, 90.0),
+                            ],
                         }],
                         texts: vec![DetectedText {
                             entity: region,
@@ -1992,6 +2180,7 @@ mod tests {
                             layer,
                         }],
                     },
+                    page,
                     &generation,
                 )
                 .unwrap();
@@ -2023,20 +2212,197 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn joined_balloons_split_into_one_region_per_utterance() {
+        let mut session = Session::memory().await.unwrap();
+        // Two balloons drawn over each other share one interior, so the mask
+        // branch returns a single waist-shaped blob and both utterances arrive
+        // inside it. Each must end up with a balloon of its own, because a
+        // shared outline is what forces the renderer to slice one cell apart and
+        // the inpainting stage to flatten both balloons together.
+        let joined = KoharuLayoutMask {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 100,
+            pixels: overlapping_ellipses(),
+        };
+        let upper = solid_mask(20, 15, 24, 20);
+        let lower = solid_mask(24, 55, 16, 20);
+        let joined_detection =
+            detection_with_mask("bubble", 0.9, [0.0, 0.0, 64.0, 100.0], joined.clone());
+        let contour = mask_geometry(&joined)
+            .expect("a joined pair of balloons still has one outline")
+            .points
+            .iter()
+            .map(|point| (point.x as f32, point.y as f32))
+            .collect::<Vec<_>>();
+        assert!(
+            contour.len() > 4,
+            "the joined outline has to keep enough vertices to carry a waist"
+        );
+
+        let generation = generation(super::PRODUCER, super::MODEL_ID).unwrap();
+        let mut ids = None;
+        let patch = session
+            .snapshot()
+            .patch(|edit| {
+                let page = edit.add_page(PageDraft::new("page", 100.0, 100.0), At::End)?;
+                let bubble = edit.add_analysis_region::<BubbleRegion>(
+                    page,
+                    At::End,
+                    &Geometry::rectangle(0.0, 0.0, 64.0, 100.0),
+                    None,
+                )?;
+                let mut utterances = Vec::new();
+                for (mask, bounds) in [
+                    (upper.clone(), [20.0f32, 15.0, 44.0, 35.0]),
+                    (lower.clone(), [24.0f32, 55.0, 40.0, 75.0]),
+                ] {
+                    let region = edit.add_analysis_region::<TextRegion>(
+                        page,
+                        At::End,
+                        &Geometry::rectangle(
+                            f64::from(bounds[0]),
+                            f64::from(bounds[1]),
+                            f64::from(bounds[2] - bounds[0]),
+                            f64::from(bounds[3] - bounds[1]),
+                        ),
+                        None,
+                    )?;
+                    let content = edit.add_text_content(page, At::End)?;
+                    let layer = edit.add_text_layer(
+                        page,
+                        At::End,
+                        content,
+                        &TextLayout {
+                            origin: Origin::User,
+                            kind: TextLayoutKind::Paragraph,
+                            angle_degrees: None,
+                        },
+                    )?;
+                    utterances.push((region, content, layer, mask, bounds));
+                }
+                link_dialogue_regions(
+                    edit,
+                    &PageRegions {
+                        bubbles: vec![DetectedRegion {
+                            entity: bubble,
+                            detection: &joined_detection,
+                            contour,
+                        }],
+                        texts: utterances
+                            .iter()
+                            .map(|(region, content, layer, mask, bounds)| DetectedText {
+                                entity: *region,
+                                mask,
+                                bounds: *bounds,
+                                content: *content,
+                                layer: *layer,
+                            })
+                            .collect(),
+                    },
+                    page,
+                    &generation,
+                )
+                .unwrap();
+                ids = Some((page, bubble, utterances));
+                Ok(())
+            })
+            .unwrap();
+        let snapshot = session.commit(patch).await.unwrap().snapshot;
+        let (page, bubble, utterances) = ids.unwrap();
+
+        let balloons = snapshot
+            .descendants(page)
+            .unwrap()
+            .into_iter()
+            .filter(|entity| {
+                entity
+                    .component::<Region>()
+                    .unwrap()
+                    .is_some_and(|region| region.kind == BubbleRegion::kind())
+            })
+            .count();
+        assert_eq!(balloons, 2, "one balloon entity per physical balloon");
+
+        let targets = utterances
+            .iter()
+            .map(|(_, _, layer, _, _)| {
+                snapshot
+                    .relation_from::<FlowsIn>(*layer)
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .target
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets.len(), 2);
+        assert_ne!(
+            targets[0], targets[1],
+            "each utterance must claim its own balloon"
+        );
+    }
+
+    /// A solid rectangle of mask ink, standing in for the strokes of one
+    /// utterance sitting inside a balloon.
+    fn solid_mask(x: u32, y: u32, width: u32, height: u32) -> KoharuLayoutMask {
+        KoharuLayoutMask {
+            x,
+            y,
+            width,
+            height,
+            pixels: vec![u8::MAX; (width * height) as usize],
+        }
+    }
+
+    /// Two ellipses stacked closely enough to share interior rows, which is what
+    /// makes the mask branch see one connected balloon instead of two.
+    fn overlapping_ellipses() -> Vec<u8> {
+        let mut pixels = vec![0u8; 64 * 100];
+        for y in 0..100u32 {
+            for x in 0..64u32 {
+                let dx = x as f32 + 0.5 - 32.0;
+                let upper = (25.0 - y as f32 - 0.5).abs() / 22.0;
+                let lower = (65.0 - y as f32 - 0.5).abs() / 22.0;
+                let inside = dx * dx / 24.0_f32.powi(2) + upper * upper <= 1.0
+                    || dx * dx / 14.0_f32.powi(2) + lower * lower <= 1.0;
+                if inside {
+                    pixels[y as usize * 64 + x as usize] = u8::MAX;
+                }
+            }
+        }
+        pixels
+    }
+
     fn detection(label: &str, score: f32, bbox: [f32; 4]) -> KoharuLayoutDetection {
-        KoharuLayoutDetection {
-            label_id: 0,
-            label: label.to_owned(),
+        detection_with_mask(
+            label,
             score,
             bbox,
-            area: 0,
-            mask: KoharuLayoutMask {
+            KoharuLayoutMask {
                 x: 0,
                 y: 0,
                 width: 1,
                 height: 1,
                 pixels: vec![0],
             },
+        )
+    }
+
+    fn detection_with_mask(
+        label: &str,
+        score: f32,
+        bbox: [f32; 4],
+        mask: KoharuLayoutMask,
+    ) -> KoharuLayoutDetection {
+        KoharuLayoutDetection {
+            label_id: 0,
+            label: label.to_owned(),
+            score,
+            bbox,
+            area: mask.pixels.iter().filter(|value| **value != 0).count() as u32,
+            mask,
         }
     }
 
@@ -2320,6 +2686,106 @@ mod tests {
                 .iter()
                 .any(|detection| detection.label == "bubble")
         );
+    }
+
+    #[test]
+    fn nms_removes_duplicate_masks_whose_boxes_barely_overlap() {
+        // Two queries settling on the same strokes. Their boxes straddle
+        // different extents, so box IoU is 0.30 and suppression has to come
+        // from the mask. The same mask on a bubble must survive: a speech bubble
+        // and its text are one instance each, not a duplicate pair.
+        let ink = KoharuLayoutMask {
+            x: 10,
+            y: 0,
+            width: 80,
+            height: 10,
+            pixels: vec![u8::MAX; 800],
+        };
+        let mut detections = vec![
+            detection_with_mask("text", 0.6, [0.0, 0.0, 100.0, 20.0], ink.clone()),
+            detection_with_mask("text", 0.9, [0.0, -20.0, 110.0, 40.0], ink.clone()),
+            detection_with_mask("bubble", 0.8, [0.0, -20.0, 110.0, 40.0], ink),
+        ];
+
+        non_maximum_suppression(&mut detections, 0.5);
+
+        assert_eq!(
+            detections
+                .iter()
+                .map(|detection| (detection.label.as_str(), detection.score))
+                .collect::<Vec<_>>(),
+            [("text", 0.9), ("bubble", 0.8)]
+        );
+    }
+
+    #[test]
+    fn nms_keeps_neighbouring_masks_that_only_share_a_boundary() {
+        // Two utterances in bubbles that touch. Their masks overlap on a two
+        // pixel seam, which must not read as one instance detected twice.
+        let mut detections = vec![
+            detection_with_mask(
+                "text",
+                0.9,
+                [0.0, 0.0, 20.0, 20.0],
+                KoharuLayoutMask {
+                    x: 0,
+                    y: 0,
+                    width: 20,
+                    height: 20,
+                    pixels: vec![u8::MAX; 400],
+                },
+            ),
+            detection_with_mask(
+                "text",
+                0.8,
+                [18.0, 0.0, 38.0, 20.0],
+                KoharuLayoutMask {
+                    x: 18,
+                    y: 0,
+                    width: 20,
+                    height: 20,
+                    pixels: vec![u8::MAX; 400],
+                },
+            ),
+        ];
+
+        non_maximum_suppression(&mut detections, 0.5);
+
+        assert_eq!(detections.len(), 2);
+    }
+
+    #[test]
+    fn malformed_masks_never_suppress_a_detection() {
+        let mut detections = vec![
+            detection_with_mask(
+                "text",
+                0.9,
+                [0.0, -20.0, 20.0, 40.0],
+                KoharuLayoutMask {
+                    x: 0,
+                    y: 0,
+                    width: 20,
+                    height: 20,
+                    pixels: vec![u8::MAX; 399],
+                },
+            ),
+            detection_with_mask(
+                "text",
+                0.8,
+                [0.0, 0.0, 20.0, 20.0],
+                KoharuLayoutMask {
+                    x: 0,
+                    y: 0,
+                    width: 20,
+                    height: 20,
+                    pixels: vec![u8::MAX; 400],
+                },
+            ),
+        ];
+
+        non_maximum_suppression(&mut detections, 0.5);
+
+        assert_eq!(detections.len(), 2);
     }
 
     #[test]
