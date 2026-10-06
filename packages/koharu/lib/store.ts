@@ -130,7 +130,9 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   setProcessingStages: (processingStages) => set({ processingStages }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   showSeries: (seriesId) => set({ seriesId }),
-  showShelf: () => set({ seriesId: null }),
+  // `chapter` is cleared alongside `seriesId`: it names a chapter by series, so leaving it behind
+  // would have the editor keep asking about a series the shelf is no longer showing.
+  showShelf: () => set({ seriesId: null, chapter: null }),
   showChapter: (chapter) => set({ chapter }),
   selectLayers: (selectedLayers) => set({ selectedLayers: [...new Set(selectedLayers)] }),
   setTool: (tool) => set({ tool }),

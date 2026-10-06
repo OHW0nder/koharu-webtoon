@@ -959,12 +959,17 @@ pub(crate) async fn delete_series_chapter(
 ) -> std::result::Result<Series, Error> {
     reject_import_while_processing(&processing)?;
     let mut series = library.read(&id)?;
-    let chapter = series
+    // 索引里已经没有这一章，就是这次删除要达成的状态。批量删除中途失败时剩下的那几章靠重试收敛，
+    // 而报「不是这部漫画的章」会让调用方以为参数错了，去改一个本来就没错的东西。
+    let Some(chapter) = series
         .chapters
         .iter()
         .find(|chapter| chapter.project == project)
         .cloned()
-        .with_context(|| format!("{project} is not a chapter of this series"))?;
+    else {
+        tracing::info!(series = %id, chapter = %project, "the chapter was already gone");
+        return Ok(series);
+    };
     delete_chapter_project(&handle, &project, projects.inner().clone()).await?;
     series.chapters.retain(|entry| entry.project != project);
     // 失效的旁挂文件清掉：新章还没建好项目时预扫描打不开它，上下文就会留着旧译文，那比没有更坏。
@@ -991,12 +996,18 @@ pub(crate) async fn delete_series(
     processing: State<'_, Processing>,
 ) -> std::result::Result<(), Error> {
     reject_import_while_processing(&processing)?;
+    let directory = library.path(&id);
+    // 目录已经不在就是这次删除要达成的状态，所以重试要能收敛。再读一次索引只会得到
+    // 「找不到路径」——一个已经把目标达成的情况，却报成失败，而调用方无从判断该不该重试。
+    if !directory.is_dir() {
+        tracing::info!(series = %id, "the series was already gone");
+        return Ok(());
+    }
     let series = library.read(&id)?;
     let projects = projects.inner().clone();
     for chapter in &series.chapters {
         delete_chapter_project(&handle, &chapter.project, projects.clone()).await?;
     }
-    let directory = library.path(&id);
     let shown = directory.clone();
     tokio::task::spawn_blocking(move || fs::remove_dir_all(&directory))
         .await

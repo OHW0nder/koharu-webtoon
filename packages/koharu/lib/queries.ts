@@ -222,6 +222,14 @@ export function useDeleteSeries() {
   const mutation = useMutation({
     mutationKey: ['delete-series'],
     mutationFn: (id: string) => call(commands.deleteSeries, id),
+    onSuccess: (_, id) => {
+      // 这部漫画已经不在盘上了，它留在缓存里的那份就是一张指向空路径的卡片：再点进去，
+      // `staleTime` 是 Infinity，它永远不会自己过期，而后端会把那个死 id 当成真实请求处理。
+      void refresh(seriesKey)
+      queryClient.removeQueries({ queryKey: seriesDetailKey(id) })
+      queryClient.removeQueries({ queryKey: seriesSettingsKey(id) })
+      queryClient.removeQueries({ queryKey: seriesGlossaryKey(id) })
+    },
   })
   return {
     deleteSeries: mutation.mutateAsync,
