@@ -12,7 +12,8 @@ use super::{
     canvas::CanvasChannel,
     preferences::Preferences,
     processing::{Job, JobChannel, Processing},
-    project::{CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary},
+    project::{ChapterRef, CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary},
+    series::SeriesLibrary,
 };
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -244,12 +245,25 @@ pub(crate) async fn get_page(
 )]
 #[tauri::command]
 #[specta::specta]
-pub(crate) async fn open_project(
-    name: String,
+pub(crate) async fn open_chapter(
+    reference: ChapterRef,
     handle: AppHandle<CefRuntime>,
 ) -> std::result::Result<(), Error> {
     let library = handle.state::<ProjectLibrary>().inner().clone();
-    let opened = library.open(&name).await?;
+    let series = handle.state::<SeriesLibrary>().inner().clone();
+    // 重新打开当前项目是空操作。写入锁已经握在这个进程自己的 `CurrentProject` 里，而 `open_chapter`
+    // 是先开新项目、后drop 旧项目，所以同一个项目走一圈只会撞上自己持有的 `project.lock`。
+    if handle
+        .state::<CurrentProject>()
+        .project
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|project| project.reference == reference)
+    {
+        return Ok(());
+    }
+    let opened = library.open(&reference, series.chapter_label(&reference)).await?;
     replace_project(&handle, opened).await?;
     Ok(())
 }

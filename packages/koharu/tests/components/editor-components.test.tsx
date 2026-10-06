@@ -491,7 +491,8 @@ describe('greenfield editor', () => {
     await act(async () => {
       pending.get('page-3')!({
         project: {
-          name: 'Book',
+          reference: { series: 'Book', chapter: 'Chapter 1' },
+          label: 'Book - Chapter 1',
           revision: 1,
           active_page: 'page-3',
           can_undo: true,
@@ -504,7 +505,8 @@ describe('greenfield editor', () => {
     await act(async () => {
       pending.get('page-2')!({
         project: {
-          name: 'Book',
+          reference: { series: 'Book', chapter: 'Chapter 1' },
+          label: 'Book - Chapter 1',
           revision: 1,
           active_page: 'page-2',
           can_undo: true,

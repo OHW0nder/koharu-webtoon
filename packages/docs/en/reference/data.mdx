@@ -11,15 +11,29 @@ icon: 'database'
 | Import              | PNG, JPEG, WebP, CBZ, ZIP, RAR, PDF |
 | Flattened export    | PNG                                 |
 | Layered interchange | PSD                                 |
-| Working project     | `.khrproj` directory                |
+| Chapter project     | directory of the application's own choosing |
 
 ## Project data
 
-Projects live at `Documents/Koharu/<project-name>.khrproj/`. Each contains alternating durable state files, a lock file while the project is open, and content-addressed blobs for source images, generated artwork, and authored raster edits. Unreferenced blobs are not removed automatically, so a heavily edited project can grow over time.
+Chapters live under a library folder, one directory per series with one directory per chapter inside it:
+
+```text
+<library>/
+  Demo Title/
+    series.json
+    Chapter 22/
+      state-a.khr
+      state-b.khr
+      blobs/
+      project.lock
+```
+
+The library folder defaults to `Documents/Koharu` and can be pointed elsewhere in **Settings → Library**. The change takes effect after a restart, and Koharu never moves existing series for you: move or delete them first, or the change is refused.
+
+Each chapter directory contains alternating durable state files, a lock file while the chapter is open, and content-addressed blobs for source images, generated artwork, and authored raster edits. Unreferenced blobs are not removed automatically, so a heavily edited chapter can grow over time.
 
 <Warning>
-  Do not change internal project files while the project is open. Deletion from the project browser
-  permanently removes the complete directory.
+  Do not change internal chapter files while the chapter is open. Deleting a chapter or a series from the app permanently removes its directory.
 </Warning>
 
 ## Settings and credentials

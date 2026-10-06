@@ -377,6 +377,17 @@
       "visionDescription": "翻訳時にページ画像をLLMへ入力します。"
     },
     "loading": "設定を読み込み中…",
+    "library": {
+      "apply": "このフォルダーを使う",
+      "browse": "フォルダーを選ぶ",
+      "description": "インポートした作品を書き込む先です。作品ごとにフォルダーができ、その中に各話のフォルダーができます。",
+      "folder": "フォルダー",
+      "folderDescription": "いま使っているフォルダーです。",
+      "location": "保存場所",
+      "locationDescription": "起動時に一度だけ読み取るので、変更は再起動後に反映されます。",
+      "restartNotice": "Koharu を再起動すると反映されます。既存の作品は移動されません。先に古いフォルダー里面的作品を削除するか移動してください。そうでない場合は変更が拒否されます。",
+      "title": "ライブラリ"
+    },
     "pipeline": {
       "description": "各ページの処理に使用するモデルとオプションを選択します。",
       "modelLabel": "{{stage}}モデル",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "外観",
+      "library": "ライブラリ",
       "pipeline": "パイプライン",
       "providers": "プロバイダー",
       "shortcuts": "ショートカット",

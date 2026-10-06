@@ -377,6 +377,17 @@
       "visionDescription": "Fornece imagens das páginas ao LLM durante a tradução."
     },
     "loading": "Carregando preferências…",
+    "library": {
+      "apply": "Usar esta pasta",
+      "browse": "Escolher pasta",
+      "description": "Onde as séries importadas são gravadas. Cada série tem sua própria pasta e, dentro dela, uma pasta por capítulo.",
+      "folder": "Pasta",
+      "folderDescription": "A pasta em uso agora.",
+      "location": "Local de armazenamento",
+      "locationDescription": "Lida uma vez na inicialização, então a mudança só vale depois de reiniciar.",
+      "restartNotice": "Vale depois de reiniciar o Koharu. Nada é movido por você: apague ou mova primeiro as séries da pasta antiga, ou a mudança será recusada.",
+      "title": "Biblioteca"
+    },
     "pipeline": {
       "description": "Escolha os modelos e opções usados para processar cada página.",
       "modelLabel": "Modelo de {{stage}}",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "Aparência",
+      "library": "Biblioteca",
       "pipeline": "Pipeline",
       "providers": "Provedores",
       "shortcuts": "Atalhos",

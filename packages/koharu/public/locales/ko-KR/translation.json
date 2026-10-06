@@ -377,6 +377,17 @@
       "visionDescription": "번역할 때 LLM에 페이지 이미지를 입력합니다."
     },
     "loading": "환경 설정 불러오는 중…",
+    "library": {
+      "apply": "이 폴더 사용",
+      "browse": "폴더 선택",
+      "description": "가져온 만화가 저장되는 곳입니다. 작품마다 폴더가 있고, 그 안에 챕터마다 폴더가 있습니다.",
+      "folder": "폴더",
+      "folderDescription": "지금 사용 중인 폴더입니다.",
+      "location": "저장 위치",
+      "locationDescription": "시작할 때 한 번만 읽으므로 다시 시작해야 적용됩니다.",
+      "restartNotice": "Koharu를 다시 시작하면 적용됩니다. 기존 작품은 옮겨주지 않습니다. 이전 폴더의 작품을 먼저 삭제하거나 옮긴 뒤 변경하세요. 그렇지 않으면 변경이 거부됩니다.",
+      "title": "라이브러리"
+    },
     "pipeline": {
       "description": "각 페이지 처리에 사용할 모델과 옵션을 선택합니다.",
       "modelLabel": "{{stage}} 모델",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "모양",
+      "library": "라이브러리",
       "pipeline": "파이프라인",
       "providers": "제공자",
       "shortcuts": "단축키",

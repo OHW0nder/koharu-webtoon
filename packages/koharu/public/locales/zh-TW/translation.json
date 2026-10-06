@@ -377,6 +377,17 @@
       "visionDescription": "翻譯時將頁面影像輸入給 LLM。"
     },
     "loading": "正在載入偏好設定…",
+    "library": {
+      "apply": "使用這個資料夾",
+      "browse": "選擇資料夾",
+      "description": "匯入的漫畫寫到哪裡。每部漫畫一個資料夾，裡面每一章再一個資料夾。",
+      "folder": "資料夾",
+      "folderDescription": "目前正在使用的資料夾。",
+      "location": "儲存位置",
+      "locationDescription": "啟動時讀取一次，所以改完要重新啟動才生效。",
+      "restartNotice": "重新啟動 Koharu 後生效。既有漫畫不會自動搬走：請先把舊資料夾裡的漫畫刪掉或移走，否則這次修改會被拒絕。",
+      "title": "漫畫庫"
+    },
     "pipeline": {
       "description": "選擇用於處理每個頁面的模型和選項。",
       "modelLabel": "{{stage}}模型",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "外觀",
+      "library": "漫畫庫",
       "pipeline": "流程",
       "providers": "提供者",
       "shortcuts": "快捷鍵",

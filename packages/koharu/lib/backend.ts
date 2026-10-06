@@ -73,6 +73,20 @@ export function refreshTranslationModels(force = false): Promise<void> {
   return request
 }
 
+/** The library folder actually in use, which is not necessarily the one the config names: an unset
+ *  config resolves to a platform default that the config file never mentions. */
+export function fetchLibraryRoot(): Promise<string> {
+  return call(commands.getLibraryRoot)
+}
+
+export function chooseLibraryFolder(): Promise<string | null> {
+  return call(commands.pickLibraryFolder)
+}
+
+export function changeLibraryRoot(root: string): Promise<null> {
+  return call(commands.setLibraryRoot, root)
+}
+
 function report(error: unknown): Error {
   const message =
     error instanceof Error

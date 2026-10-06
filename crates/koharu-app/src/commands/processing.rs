@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::{
     ChannelExt as _, Error,
     canvas::CanvasChannel,
-    project::{CurrentProject, ProjectLibrary},
+    project::{ChapterRef, CurrentProject, ProjectLibrary},
     series::SeriesLibrary,
 };
 use crate::injection;
@@ -163,13 +163,13 @@ pub(crate) async fn start_job(
     job_channel: State<'_, JobChannel>,
     subject: Subject,
 ) -> std::result::Result<Started, Error> {
-    // 名字与场景必须同一次加锁取出来：名字要拿去反查漫画归属，场景是这一次真正处理的，两者错配就会
+    // 引用与场景必须同一次加锁取出来：引用要拿去反查漫画归属，场景是这一次真正处理的，两者错配就会
     // 把一部漫画的资料算到另一章上。
-    let (name, snapshot) = {
+    let (reference, snapshot) = {
         let current = handle.state::<CurrentProject>();
         let project = current.project.lock().await;
         let project = project.as_ref().context("no project is open")?;
-        (project.name.clone(), project.snapshot())
+        (project.reference.clone(), project.snapshot())
     };
     let id = JobId::new();
     let stop = StopToken::default();
@@ -180,7 +180,7 @@ pub(crate) async fn start_job(
         }
         stops.insert(id, stop.clone());
     }
-    let prepared = match prepare(&handle, &name, subject).await {
+    let prepared = match prepare(&handle, &reference, subject).await {
         Ok(prepared) => prepared,
         Err(error) => {
             processing.stops.lock().remove(&id);
@@ -392,30 +392,30 @@ pub(crate) async fn start_job(
 /// 属于哪部漫画；查不到就只跑用户自己的全局指导，那条路径没有任何漫画资料。
 async fn prepare(
     handle: &AppHandle<CefRuntime>,
-    project: &str,
+    reference: &ChapterRef,
     subject: Subject,
 ) -> Result<Option<injection::Prepared>> {
     let prepared = match subject {
         Subject::ThisChapter(prepared) => Some(prepared),
-        Subject::CurrentProject => chapter_subject(handle, project).await?,
+        Subject::CurrentProject => chapter_subject(handle, reference).await?,
     };
     Ok(prepared)
 }
 
-/// 单章运行的资料：反查这个项目属于哪部漫画，是就算出这一次的。查不到就只跑用户自己的全局指导。
+/// 单章运行的资料：反查这一章属于哪部漫画，是就算出这一次的。查不到就只跑用户自己的全局指导。
 async fn chapter_subject(
     handle: &AppHandle<CefRuntime>,
-    project: &str,
+    reference: &ChapterRef,
 ) -> Result<Option<injection::Prepared>> {
     let library = handle.state::<SeriesLibrary>().inner().clone();
-    let Some(series) = library.owning_series(project)? else {
+    let Some(series) = library.owning_series(reference)? else {
         return Ok(None);
     };
     // 与跑批同一趟预扫描：整部漫画的原文决定术语命中哪一批词条，所以命中结果不随运行方式变化。
     let projects = handle.state::<ProjectLibrary>().inner().clone();
     let assets = injection::Assets::collect(&library, &series, &projects).await?;
     let baseline = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
-    injection::Prepared::for_chapter(&assets, project, &baseline).map(Some)
+    injection::Prepared::for_chapter(&assets, reference, &baseline).map(Some)
 }
 
 #[tracing::instrument(

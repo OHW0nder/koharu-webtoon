@@ -20,11 +20,12 @@
 //! 所以渲染期即可判断，零流水线改动（`koharu-glossary-design.md` §5）。不支持提示词的服务商会静默丢弃
 //! 全部注入内容，所以必须在注入前关掉，并把这个事实报给界面。
 //!
-//! **谁在什么时候注入。** 一部漫画加一个项目名决定一次运行的全部资料：跑批逐章换，单章运行算一次，两条
+//! **谁在什么时候注入。** 一部漫画加一章的引用决定一次运行的全部资料：跑批逐章换，单章运行算一次，两条
 //! 路径因此拿到逐字节相同的提示词。资料写进管线跑的那份内存配置，跑完 [`restore`] 还原——句柄是全局的，
 //! 残留的漫画资料会漏进设置页与下一次运行。
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -37,8 +38,8 @@ use tauri_runtime_cef::CefRuntime;
 
 use crate::{
     commands::{
-        project::ProjectLibrary,
-        series::{Glossary, Series, SeriesLibrary},
+        project::{ChapterRef, ProjectLibrary},
+        series::{Glossary, Series, SeriesLibrary, chapter_label},
     },
     glossary,
 };
@@ -52,7 +53,7 @@ const CONTEXT_FILE_PREFIX: &str = "context-";
 pub(crate) struct Injection {
     /// 本作特有的翻译风格约定。
     pub guidance: String,
-    /// 术语表。命中判定用的 `haystack` 是整部漫画的原文，不是单页原文。
+    /// 术语表。命中判定用的 `haystack` 是当前章的原文，不是单页原文。
     pub glossary: Glossary,
     pub haystack: String,
     /// 用户在设置里写的全局指导，排在最后作为跨作品的兜底。
@@ -148,26 +149,26 @@ pub(crate) fn render(injection: &Injection, provider: koharu_translator::Provide
 
 /// 一部漫画的翻译资料，按运行开始前的状态一次性备好。
 ///
-/// **预扫描是必需的，不是优化。** 术语命中要看整部漫画的原文，而内核同一时刻只有一个活动项目，所以
-/// 「拿到全部原文」只能靠运行开始前逐章打开一次；上一章的基线也出自同一趟。两趟合一，每章两次打开，
-/// 与是否启用上文无关。跑批在批首扫一次，单章运行开跑前扫一次，所以同一章无论走哪条路，命中的是同一
-/// 批词条。
+/// **预扫描是必需的，不是优化。** 术语命中要看这一章的原文，而内核同一时刻只有一个活动项目，所以
+/// 「拿到原文」只能靠运行开始前逐章打开一次；上一章的基线也出自同一趟。两趟合一，每章两次打开，
+/// 与是否启用上文无关。跑批在批首扫一次，单章运行开跑前扫一次，所以同一章无论走哪条路，拿到的都是
+/// 同一段提示词。
 pub(crate) struct Assets {
     /// 漫画目录，上文旁挂文件与它同级。
     pub(crate) directory: PathBuf,
     /// 用户手写的指导。
     guidance: String,
     glossary: Glossary,
-    /// 整部漫画的原文，供术语命中判定。
-    haystack: String,
+    /// 章序号 → 该章全部页的原文，供这一章的术语命中判定。
+    haystacks: BTreeMap<u32, String>,
     /// 上文窗口的页数：章内与章外取的都是「最近若干页」，用户只调一个旋钮。
     pub(crate) context_pages: u32,
-    /// 章序号 → 章项目名，用来判「下一章」和读自己的上文。
-    order: Vec<(u32, String)>,
+    /// 章序号 → 章的引用，用来判「下一章」和读自己的上文。
+    order: Vec<(u32, ChapterRef)>,
 }
 
 impl Assets {
-    /// 逐章打开一次，收集全部原文，并为每一章的下一章写下上文窗口的基线。
+    /// 逐章打开一次，收集每章的原文，并为每一章的下一章写下上文窗口的基线。
     ///
     /// 基线取自「磁盘上已有的译文」，所以中断之后重跑仍然拿得到上一章的写法。
     pub(crate) async fn collect(
@@ -178,26 +179,44 @@ impl Assets {
         let directory = library.path(&series.id);
         // 术语表坏了就报错，不静默当成空表：用户以为在生效的术语表不见了，比一次失败更难排查。
         let glossary = glossary::load(&directory)?;
+        let order = series
+            .chapters
+            .iter()
+            .map(|chapter| {
+                (
+                    chapter.seq,
+                    ChapterRef {
+                        series: series.id.clone(),
+                        chapter: chapter.chapter.clone(),
+                    },
+                )
+            })
+            .collect();
         let mut assets = Self {
             directory,
             guidance: series.settings.guidance.clone(),
             glossary,
-            haystack: String::new(),
+            haystacks: BTreeMap::new(),
             context_pages: series.settings.context_pages,
-            order: series
-                .chapters
-                .iter()
-                .map(|chapter| (chapter.seq, chapter.project.clone()))
-                .collect(),
+            order,
         };
         for chapter in &series.chapters {
+            let reference = ChapterRef {
+                series: series.id.clone(),
+                chapter: chapter.chapter.clone(),
+            };
             // 还没建项目的章没有原文可读，跳过而不是替它造一份空的。
-            let Ok(opened) = projects.open(&chapter.project).await else {
+            let Ok(opened) = projects
+                .open(&reference, chapter_label(series, chapter))
+                .await
+            else {
                 continue;
             };
             let snapshot = opened.snapshot();
-            assets.haystack.push_str(&source_text(&snapshot)?);
-            let Some(next) = assets.successor(&chapter.project) else {
+            assets
+                .haystacks
+                .insert(chapter.seq, source_text(&snapshot)?);
+            let Some(next) = assets.successor(&reference) else {
                 continue;
             };
             let context = prior_chapter_context(&snapshot, assets.context_pages);
@@ -208,18 +227,18 @@ impl Assets {
 
     /// 某章的下一章序号。序号是作品结构的客观顺序，与用户勾选和执行的顺序无关
     /// （`docs/reference/koharu-glossary-design.md` §2.4）。
-    pub(crate) fn successor(&self, project: &str) -> Option<u32> {
-        let seq = self.seq(project).ok()?;
+    pub(crate) fn successor(&self, reference: &ChapterRef) -> Option<u32> {
+        let seq = self.seq(reference).ok()?;
         self.order
             .iter()
             .map(|(candidate, _)| *candidate)
             .find(|candidate| *candidate > seq)
     }
 
-    fn seq(&self, project: &str) -> Result<u32> {
+    fn seq(&self, reference: &ChapterRef) -> Result<u32> {
         self.order
             .iter()
-            .find(|(_, candidate)| candidate == project)
+            .find(|(_, candidate)| candidate == reference)
             .map(|(seq, _)| *seq)
             .context("the chapter is not registered in this series")
     }
@@ -228,14 +247,25 @@ impl Assets {
     /// 这部漫画的。
     ///
     /// 上文不在这里：它逐页变化，由翻译阶段就地取一个跨章连续的窗口，所以走配置而不是走渲染。
-    fn injection(&self) -> Injection {
+    fn injection(&self, seq: u32) -> Injection {
         Injection {
             guidance: self.guidance.clone(),
             glossary: self.glossary.clone(),
-            haystack: self.haystack.clone(),
+            haystack: self.haystack(seq).to_owned(),
             global: None,
             order: None,
         }
+    }
+
+    /// 一章的原文，供这一章的术语命中判定。
+    ///
+    /// **按章而不是按全书。** 附加说明是运行级的一段散文，翻译阶段拿不到逐页变化的清单，所以能判定
+    /// 的最小范围就是章。落在别章的词条对这一章没有用处，按全书判定只会把它们一起注入。
+    ///
+    /// 没有这一章的原文就是空原文，那一章的术语表整份不注入而不是回退到全书：项目读不出来时，
+    /// 翻译同样拿不到这一章的场景。
+    fn haystack(&self, seq: u32) -> &str {
+        self.haystacks.get(&seq).map_or("", String::as_str)
     }
 }
 
@@ -257,16 +287,17 @@ impl Prepared {
     /// 渲染层决定，而「用户改了什么」不需要在这一层知道。
     pub(crate) fn for_chapter(
         assets: &Assets,
-        chapter: &str,
+        chapter: &ChapterRef,
         baseline: &koharu_pipeline::PipelineConfig,
     ) -> Result<Self> {
-        let mut built = assets.injection();
+        let seq = assets.seq(chapter)?;
+        let mut built = assets.injection(seq);
         built.global = baseline.translation.instructions.clone();
         let rendered = render(&built, baseline.translation.model.provider);
         Ok(Self {
             text: rendered.text,
             context_pages: assets.context_pages,
-            prior: load_prior_context(&assets.directory, assets.seq(chapter)?),
+            prior: load_prior_context(&assets.directory, seq),
             matched: rendered.matched as u32,
             unsupported: rendered.unsupported,
         })
@@ -306,10 +337,10 @@ pub(crate) fn restore(handle: &AppHandle<CefRuntime>) -> Result<()> {
     handle.state::<koharu_pipeline::Pipeline>().refresh()
 }
 
-/// 待译内容里的全部原文，供术语命中判定。
+/// 一章里全部待译原文，供这一章的术语命中判定。
 ///
-/// 是整部漫画而不是单页：逐页匹配会漏掉那些在这一页没出现、但在别页出现的词条
-/// （`koharu-glossary-design.md` §4.3）。因此这条要在一次运行开始前预扫描逐章收集一次。
+/// 是整章而不是单页：附加说明是运行级的一段散文，一章共用一份，翻译阶段拿不到逐页变化的清单
+/// （`koharu-glossary-design.md` §4.3）。落在别章的词条对这一章没有用处，所以不按全书判定。
 pub(crate) fn source_text(snapshot: &Snapshot) -> Result<String> {
     let mut text = String::new();
     for page in snapshot.pages() {
@@ -444,6 +475,32 @@ mod tests {
         }
     }
 
+    /// 一部漫画的运行资料，章序号与原文一一对应。
+    fn assets(chapters: &[(u32, &str)]) -> Assets {
+        Assets {
+            directory: std::env::temp_dir(),
+            guidance: String::new(),
+            glossary: glossary(Vec::new()),
+            haystacks: chapters
+                .iter()
+                .map(|(seq, text)| (*seq, (*text).to_owned()))
+                .collect(),
+            context_pages: 2,
+            order: chapters
+                .iter()
+                .map(|(seq, _)| {
+                    (
+                        *seq,
+                        ChapterRef {
+                            series: "series".to_owned(),
+                            chapter: format!("chapter-{seq}"),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
     /// 一页一页地建一个项目，每页一条文本。译文为 `None` 表示这一页还没翻。
     async fn project(pages: &[(&str, Option<&str>)]) -> Snapshot {
         let mut session = Session::memory().await.expect("memory session");
@@ -572,6 +629,38 @@ mod tests {
                 "entry {index} is missing"
             );
         }
+    }
+
+    #[test]
+    fn terminology_is_matched_against_its_own_chapter_only() {
+        // 逐章判定：落在别章的词条对这一页没有用处，注入它只是让提示词更长、模型更容易分心。
+        let assets = assets(&[(1, "アリスが笑った"), (2, "ワープの harnessed な話")]);
+        let mut built = assets.injection(1);
+        built.glossary = glossary(vec![entry("アリス", "Alice"), entry("ワープ", "Warp")]);
+        let first = render(&built, koharu_translator::Provider::Local);
+
+        let mut built = assets.injection(2);
+        built.glossary = glossary(vec![entry("アリス", "Alice"), entry("ワープ", "Warp")]);
+        let second = render(&built, koharu_translator::Provider::Local);
+
+        assert_eq!(first.matched, 1, "only this chapter's own term");
+        assert!(first.text.contains("アリス → Alice"));
+        assert!(!first.text.contains("ワープ → Warp"));
+        assert_eq!(second.matched, 1);
+        assert!(second.text.contains("ワープ → Warp"));
+        assert!(!second.text.contains("アリス → Alice"));
+    }
+
+    #[test]
+    fn a_chapter_without_readable_text_injects_no_terminology() {
+        // 没有原文就是没有命中，而不是回退到全书：这一章的项目读不出来时，翻译同样拿不到它的场景。
+        let assets = assets(&[(1, "アリス")]);
+        let mut built = assets.injection(9);
+        built.glossary = glossary(vec![entry("アリス", "Alice")]);
+
+        let rendered = render(&built, koharu_translator::Provider::Local);
+        assert_eq!(rendered.matched, 0);
+        assert_eq!(rendered.text, "");
     }
 
     #[tokio::test]

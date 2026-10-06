@@ -4,6 +4,7 @@ import { create } from 'zustand'
 
 import type {
   CanvasState,
+  ChapterRef,
   Download,
   EntityId,
   Job,
@@ -69,7 +70,7 @@ interface KoharuStore {
   /// having to work out which series a project belongs to. Every project belongs to exactly one
   /// chapter of exactly one series, so the pair is enough to look the rest of the series up.
   /// `null` until a chapter is opened from its own list.
-  chapter: { seriesId: string; project: string } | null
+  chapter: { seriesId: string; reference: ChapterRef } | null
   shortcuts: Shortcuts
   selectPages: (pages: EntityId[]) => void
   showInspector: (section: InspectorSection) => void
@@ -78,7 +79,7 @@ interface KoharuStore {
   setSettingsOpen: (open: boolean) => void
   showSeries: (id: string) => void
   showShelf: () => void
-  showChapter: (chapter: { seriesId: string; project: string }) => void
+  showChapter: (chapter: { seriesId: string; reference: ChapterRef }) => void
   selectLayers: (layers: EntityId[]) => void
   setTool: (tool: CanvasTool) => void
   setBrush: (brush: CanvasBrush) => void

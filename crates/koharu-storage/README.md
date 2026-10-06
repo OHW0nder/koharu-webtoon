@@ -8,7 +8,7 @@ belong above this crate.
 ## Format
 
 ```text
-project.khrproj/
+<any directory the caller chooses>/
 |-- state-a.khr
 |-- state-b.khr
 |-- blobs/
@@ -17,7 +17,7 @@ project.khrproj/
 `-- project.lock
 ```
 
-The two state files are alternating complete snapshots. Each contains a magic
+The crate is given a path and never names it: the application owns the layout, so a project directory can sit anywhere in a hierarchy the application defines. The two state files are alternating complete snapshots. Each contains a magic
 value, format version, document ID, monotonic revision, complete referenced-blob
 set, opaque payload, and BLAKE3 checksum. On open, storage validates both slots
 and selects the newest complete state whose blobs exist. If that slot is corrupt

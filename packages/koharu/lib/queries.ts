@@ -13,6 +13,7 @@ import {
   commands,
   type AdBands,
   type ChapterKind,
+  type ChapterRef,
   type FontFamily,
   type Glossary,
   type Operation,
@@ -195,7 +196,7 @@ export function useSaveGlossary(id: string) {
 export function useDeleteSeriesChapter(id: string) {
   const mutation = useMutation({
     mutationKey: ['delete-series-chapter', id],
-    mutationFn: (project: string) => call(commands.deleteSeriesChapter, id, project),
+    mutationFn: (reference: ChapterRef) => call(commands.deleteSeriesChapter, id, reference),
     onSuccess: (series) => {
       queryClient.setQueryData(seriesDetailKey(id), series)
       // The shelf shows the done/total ratio, so the chapter count changed under it too.
@@ -209,31 +210,31 @@ export function useDeleteSeriesChapter(id: string) {
 }
 
 /**
- * Projects no series claims. These are not a category of work: every project belongs to exactly
- * one chapter of one series, so anything listed here is debris from an import that failed before
- * it wrote its index, or from an index the user removed by hand.
+ * Chapters no series claims. These are not a category of work: every chapter belongs to exactly
+ * one series, so anything listed here is debris from an import that failed before it wrote its
+ * index, or from an index the user removed by hand.
  */
-export function useOrphanedProjects(enabled = true) {
+export function useOrphanedChapters(enabled = true) {
   return useQuery({
     queryKey: [...seriesKey, 'orphaned'],
-    queryFn: () => call(commands.listOrphanedProjects),
+    queryFn: () => call(commands.listOrphanedChapters),
     enabled,
   })
 }
 
-export function useDeleteOrphanedProject() {
+export function useDeleteOrphanedChapter() {
   const mutation = useMutation({
-    mutationKey: ['delete-orphaned-project'],
-    mutationFn: (name: string) => call(commands.deleteOrphanedProject, name),
+    mutationKey: ['delete-orphaned-chapter'],
+    mutationFn: (reference: ChapterRef) => call(commands.deleteOrphanedChapter, reference),
     onSuccess: () => {
-      // The set is derived from the difference between the projects on disk and the chapter
+      // The set is derived from the difference between the chapters on disk and the chapter
       // entries in every index, so deleting one changes it without touching any series.
       void refresh([...seriesKey, 'orphaned'])
     },
   })
   return {
     deleteOrphan: mutation.mutateAsync,
-    deletingOrphan: useIsMutating({ mutationKey: ['delete-orphaned-project'] }) > 0,
+    deletingOrphan: useIsMutating({ mutationKey: ['delete-orphaned-chapter'] }) > 0,
   }
 }
 
@@ -274,8 +275,8 @@ export function useImportSeriesChapter(id: string) {
 export function useProcessSeriesChapters(id: string) {
   const mutation = useMutation({
     mutationKey: ['process-series-chapters', id],
-    mutationFn: (input: { projects: string[]; operation: Operation }) =>
-      call(commands.processSeriesChapters, id, input.projects, input.operation),
+    mutationFn: (input: { chapters: ChapterRef[]; operation: Operation }) =>
+      call(commands.processSeriesChapters, id, input.chapters, input.operation),
     onSuccess: () => refresh(seriesDetailKey(id), projectKey, pagesKey, pageKey),
   })
   return {
@@ -287,11 +288,11 @@ export function useProcessSeriesChapters(id: string) {
 export function useExportSeriesChapters(id: string) {
   const mutation = useMutation({
     mutationKey: ['export-series-chapters', id],
-    mutationFn: (input: { projects: string[] }) =>
-      call(commands.exportSeriesChapters, id, input.projects),
+    mutationFn: (input: { chapters: ChapterRef[] }) =>
+      call(commands.exportSeriesChapters, id, input.chapters),
   })
   return {
-    exportChapters: (input: { projects: string[] }) => mutation.mutateAsync(input),
+    exportChapters: (input: { chapters: ChapterRef[] }) => mutation.mutateAsync(input),
     exporting: useIsMutating({ mutationKey: ['export-series-chapters', id] }) > 0,
   }
 }

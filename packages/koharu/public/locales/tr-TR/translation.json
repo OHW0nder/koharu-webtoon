@@ -377,6 +377,17 @@
       "visionDescription": "Çeviri sırasında sayfa görsellerini LLM'ye iletir."
     },
     "loading": "Tercihler yükleniyor…",
+    "library": {
+      "apply": "Bu klasörü kullan",
+      "browse": "Klasör seç",
+      "description": "İçe aktarılan serilerin nereye yazıldığı. Her seri kendi klasörüne, içine de her bölüm için bir klasör.",
+      "folder": "Klasör",
+      "folderDescription": "Şu anda kullanılan klasör.",
+      "location": "Depolama konumu",
+      "locationDescription": "Başlangıçta bir kez okunur, bu yüzden değişiklik yeniden başlatınca etkinleşir.",
+      "restartNotice": "Koharu yeniden başlatıldığında etkinleşir. Hiçbir şey taşınmaz: önce eski klasördeki serileri sil veya taşı, aksi hâlde değişiklik reddedilir.",
+      "title": "Kitaplık"
+    },
     "pipeline": {
       "description": "Her sayfayı işlemek için kullanılan modelleri ve seçenekleri seçin.",
       "modelLabel": "{{stage}} modeli",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "Görünüm",
+      "library": "Kitaplık",
       "pipeline": "İşlem hattı",
       "providers": "Sağlayıcılar",
       "shortcuts": "Kısayollar",

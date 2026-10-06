@@ -51,7 +51,7 @@ import { cn } from '@koharu/ui/lib/utils'
 const emptyPages: PageSummary[] = []
 
 interface IntentPrefetchState {
-  project: string
+  chapter: string
   revision: number
   pages: Set<string>
 }
@@ -157,8 +157,8 @@ export function PageRail() {
     const project = queryClient.getQueryData<ProjectInfo | null>(projectKey)
     if (!project || project.active_page === page) return
     let state = intentPrefetch.current
-    if (!state || state.project !== project.name || state.revision !== project.revision) {
-      state = { project: project.name, revision: project.revision, pages: new Set() }
+    if (!state || state.chapter !== project.label || state.revision !== project.revision) {
+      state = { chapter: project.label, revision: project.revision, pages: new Set() }
       intentPrefetch.current = state
     }
     const prepared = queryClient.getQueryData<CanvasPagePreparation>(preparedPageKey(page))
@@ -172,7 +172,7 @@ export function PageRail() {
         )
         if (
           preparedPage &&
-          current?.name === project.name &&
+          current?.label === project.label &&
           current.revision === preparedPage.revision
         ) {
           queryClient.setQueryData(preparedPageKey(page), preparedPage)

@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   Cpu,
+  FolderOpen,
   KeyRound,
   Keyboard,
   Languages,
@@ -16,6 +17,7 @@ import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { LibraryPreferences } from '@/components/preferences/LibraryPreferences'
 import { PipelinePreferences } from '@/components/preferences/PipelinePreferences'
 import {
   PreferencePage,
@@ -47,6 +49,7 @@ import {
 
 const tabs = [
   ['appearance', Palette],
+  ['library', FolderOpen],
   ['pipeline', Cpu],
   ['providers', KeyRound],
   ['translation', Languages],
@@ -202,9 +205,11 @@ export function SettingsPage() {
         </header>
         <ScrollArea className='min-h-0 flex-1'>
           <div className='mx-auto w-full max-w-4xl px-10 py-10'>
-            {/* Appearance and shortcuts never reach `save_preferences`, so they stay live while a job
-                runs. The other four all funnel into it, so one fieldset covers them all. */}
-            {(tab === 'pipeline' ||
+            {/* Appearance and shortcuts never reach a settings command, so they stay live while a job
+                runs. The other five all funnel into one that refuses to run, so a single fieldset
+                covers them all. */}
+            {(tab === 'library' ||
+              tab === 'pipeline' ||
               tab === 'providers' ||
               tab === 'translation' ||
               tab === 'typesetting') && (
@@ -216,6 +221,7 @@ export function SettingsPage() {
                   disabled={running}
                   className='m-0 min-w-0 border-0 p-0 disabled:opacity-60'
                 >
+                  {tab === 'library' && <LibraryPreferences />}
                   {tab === 'pipeline' &&
                     (pipeline ? (
                       <PipelinePreferences value={pipeline} onChange={setPipeline} />

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use anyhow::Result;
 use koharu_pipeline::PipelineConfig;
@@ -7,10 +7,15 @@ use koharu_secrets::ExposeSecret as _;
 use koharu_translator::{Language, Model, Provider, ProviderConfig, ProvidersConfig};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager as _, State};
+use tauri::{AppHandle, Manager as _, State, WebviewWindow};
 use tauri_runtime_cef::CefRuntime;
 
-use super::{Error, Processing, reject_settings_while_processing};
+use super::{
+    Error, Processing,
+    project::{LibraryConfig, ProjectLibrary},
+    reject_settings_while_processing,
+    series::SeriesLibrary,
+};
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct Preferences {
@@ -206,6 +211,67 @@ fn publish_to_live_pipeline(handle: &AppHandle<CefRuntime>, pipeline: PipelineCo
         Ok(mut current) => *current = pipeline,
         Err(error) => tracing::error!(%error, "could not reach the live pipeline configuration"),
     }
+}
+
+/// 漫画库根目录，也就是界面上显示的那个位置。
+///
+/// 报的是磁盘上真正在用的目录，不是配置文件里那一份：用户没有指定时它是解析出来的默认值，而配置里
+/// 并不存在那一项。
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn get_library_root(
+    library: State<'_, ProjectLibrary>,
+) -> std::result::Result<PathBuf, Error> {
+    Ok(library.root().to_owned())
+}
+
+/// 指定漫画库根目录。
+///
+/// **只写配置，不搬数据。** 库在启动时解析一次位置并持有它，所以改完要重启才生效。因此库里已经装了
+/// 漫画时直接拒绝：让用户以为换位置只是改个设置，重启后看到空库再重新导入一遍，比现在多问一句糟糕得多。
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn set_library_root(
+    root: PathBuf,
+    library: State<'_, ProjectLibrary>,
+    series: State<'_, SeriesLibrary>,
+    processing: State<'_, Processing>,
+) -> std::result::Result<(), Error> {
+    reject_settings_while_processing(&processing)?;
+    let current = library.root().to_owned();
+    if root == current {
+        return Ok(());
+    }
+    let held = series.list()?.len();
+    if held > 0 {
+        return Err(anyhow::anyhow!(
+            "{current:?} still holds {held} series; move or delete them before pointing the library at {root:?}"
+        )
+        .into());
+    }
+    let config = LibraryConfig::load()?;
+    {
+        let mut live = config.write()?;
+        live.root = Some(root.clone());
+        live.save()?;
+    }
+    tracing::info!(library = %root.display(), "the library folder moves on the next start");
+    Ok(())
+}
+
+/// 打开文件夹选择器，返回用户挑的位置，取消则返回 `None`。
+///
+/// 选择器留在后端，因为 `rfd` 需要窗口句柄；与章目录那个选择器是同一个理由，所以也是同一种写法。
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn pick_library_folder(
+    window: WebviewWindow<CefRuntime>,
+) -> std::result::Result<Option<String>, Error> {
+    Ok(rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .pick_folder()
+        .await
+        .map(|folder| folder.path().to_string_lossy().into_owned()))
 }
 
 fn remember_pipeline_profiles(config: &mut PipelineConfig) {

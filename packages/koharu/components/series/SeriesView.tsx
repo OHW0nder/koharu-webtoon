@@ -31,6 +31,7 @@ import {
   commands,
   type AdBands,
   type ChapterKind,
+  type ChapterRef,
   type ChapterStatus,
   type Operation,
   type SeriesRun,
@@ -70,6 +71,12 @@ const PIPELINES: { label: string; operation: Operation }[] = [
   { label: 'phase.inpainting', operation: { operation: 'only', stage: 'inpainting' } },
 ]
 
+/** A chapter's address on disk. The chapter directory holds nothing but a sequence number, so the
+ *  series directory it sits in is what makes a reference addressable. */
+function referenceOf(series: string, chapter: { chapter: string }): ChapterRef {
+  return { series, chapter: chapter.chapter }
+}
+
 export function SeriesView({ id }: { id: string }) {
   const { t } = useTranslation()
   const showShelf = useKoharuStore((state) => state.showShelf)
@@ -86,24 +93,24 @@ export function SeriesView({ id }: { id: string }) {
   const chapters = series.data?.chapters ?? []
   const busy = processing || exporting || importingChapter || deletingChapter || deletingSeries
   const chosen = useMemo(
-    () => chapters.filter((chapter) => selected.includes(chapter.project)),
+    () => chapters.filter((chapter) => selected.includes(chapter.chapter)),
     [chapters, selected],
   )
-  const targets = chosen.map((chapter) => chapter.project)
+  const targets = chosen.map((chapter) => referenceOf(id, chapter))
   const webtoonChapters = chapters.filter((chapter) => chapter.kind === 'webtoon').length
 
-  const toggle = (project: string) =>
+  const toggle = (chapter: string) =>
     setSelected((current) =>
-      current.includes(project)
-        ? current.filter((entry) => entry !== project)
-        : [...current, project],
+      current.includes(chapter)
+        ? current.filter((entry) => entry !== chapter)
+        : [...current, chapter],
     )
 
   // Injection is truncated silently on the backend, so the batch reports what actually reached
   // the prompt. Without that the user has no way to tell why the result keeps changing.
-  const start = (projects: string[], operation: Operation) => {
+  const start = (chapters: ChapterRef[], operation: Operation) => {
     setRun(null)
-    void processChapters({ projects, operation })
+    void processChapters({ chapters, operation })
       .then((result) => setRun(result))
       .catch(() => undefined)
   }
@@ -142,7 +149,7 @@ export function SeriesView({ id }: { id: string }) {
           disabled={busy || targets.length === 0}
           aria-busy={exporting}
           className='h-7 gap-1.5 text-[10px]'
-          onClick={() => void exportChapters({ projects: targets }).catch(() => undefined)}
+          onClick={() => void exportChapters({ chapters: targets }).catch(() => undefined)}
         >
           {exporting ? (
             <LoaderCircle className='size-3 animate-spin' />
@@ -175,6 +182,7 @@ export function SeriesView({ id }: { id: string }) {
         <>
           <div className='border-b border-border/40 px-4 py-1.5'>
             <ProcessRange
+              series={id}
               chapters={chapters}
               busy={busy}
               running={processing}
@@ -189,7 +197,7 @@ export function SeriesView({ id }: { id: string }) {
                 checked={targets.length === chapters.length}
                 onChange={(event) =>
                   setSelected(
-                    event.target.checked ? chapters.map((chapter) => chapter.project) : [],
+                    event.target.checked ? chapters.map((chapter) => chapter.chapter) : [],
                   )
                 }
               />
@@ -201,6 +209,7 @@ export function SeriesView({ id }: { id: string }) {
                   {t('series.selectedCount', { count: chosen.length })}
                 </span>
                 <DeleteChaptersDialog
+                  series={id}
                   chapters={chosen}
                   trigger={
                     <Button
@@ -214,8 +223,8 @@ export function SeriesView({ id }: { id: string }) {
                       {t('series.deleteSelected', { count: chosen.length })}
                     </Button>
                   }
-                  onConfirm={async (projects) => {
-                    for (const project of projects) await deleteChapter(project)
+                  onConfirm={async (chapters) => {
+                    for (const chapter of chapters) await deleteChapter(chapter)
                     setSelected([])
                   }}
                 />
@@ -245,15 +254,16 @@ export function SeriesView({ id }: { id: string }) {
             <ul className='grid w-full gap-1'>
               {chapters.map((chapter) => (
                 <ChapterRow
-                  key={chapter.project}
+                  key={chapter.chapter}
                   chapter={chapter}
-                  picked={selected.includes(chapter.project)}
+                  reference={referenceOf(id, chapter)}
+                  picked={selected.includes(chapter.chapter)}
                   disabled={busy}
-                  onToggle={() => toggle(chapter.project)}
-                  onDelete={() => deleteChapter(chapter.project)}
-                  onOpen={async (project) => {
-                    await call(commands.openProject, project)
-                    showChapter({ seriesId: id, project })
+                  onToggle={() => toggle(chapter.chapter)}
+                  onDelete={() => deleteChapter(referenceOf(id, chapter))}
+                  onOpen={async (reference) => {
+                    await call(commands.openChapter, reference)
+                    showChapter({ seriesId: id, reference })
                   }}
                 />
               ))}
@@ -268,22 +278,24 @@ export function SeriesView({ id }: { id: string }) {
 /** Runs one operation over a run of chapters, addressed the way the list shows them: `#4` through
  *  `#12`, with either end left open.
  *
- *  The backend takes project names and the index is already loaded here, so the range resolves against
+ *  The backend takes chapter references and the index is already loaded here, so the range resolves against
  *  that list rather than teaching the command a second way to name the same chapters. A deleted
  *  chapter leaves its number free instead of shifting the rest, so a range skips those gaps rather than
  *  quietly running a different set than the numbers suggest. An empty end number means the single
  *  chapter the start names, which is the common "just this one" case.
  */
 function ProcessRange({
+  series,
   chapters,
   busy,
   running,
   onRun,
 }: {
-  chapters: { seq: number; project: string }[]
+  series: string
+  chapters: { seq: number; chapter: string }[]
   busy: boolean
   running: boolean
-  onRun: (projects: string[], operation: Operation) => void
+  onRun: (chapters: ChapterRef[], operation: Operation) => void
 }) {
   const { t } = useTranslation()
   const [from, setFrom] = useState('')
@@ -297,18 +309,18 @@ function ProcessRange({
     return { low: Math.min(start, end), high: Math.max(start, end) }
   }, [from, to])
 
-  const projects = useMemo(() => {
+  const targets = useMemo(() => {
     if (!range) return []
     return chapters
       .filter((chapter) => chapter.seq >= range.low && chapter.seq <= range.high)
-      .map((chapter) => chapter.project)
-  }, [chapters, range])
+      .map((chapter) => referenceOf(series, chapter))
+  }, [chapters, range, series])
 
   const status = !range
     ? t('series.range.hint')
-    : projects.length === 0
+    : targets.length === 0
       ? t('series.range.empty')
-      : t('series.range.count', { count: projects.length })
+      : t('series.range.count', { count: targets.length })
 
   const field = (value: string, onChange: (next: string) => void, label: string) => (
     <Input
@@ -335,7 +347,7 @@ function ProcessRange({
       <div className='ml-auto'>
         <DropdownMenu>
           <DropdownMenuTrigger
-            disabled={busy || projects.length === 0}
+            disabled={busy || targets.length === 0}
             render={
               <Button
                 type='button'
@@ -358,7 +370,7 @@ function ProcessRange({
             {PIPELINES.map((pipeline) => (
               <DropdownMenuItem
                 key={pipeline.label}
-                onClick={() => onRun(projects, pipeline.operation)}
+                onClick={() => onRun(targets, pipeline.operation)}
               >
                 {t(pipeline.label)}
               </DropdownMenuItem>
@@ -515,6 +527,7 @@ function ImportChapterDialog({
 }
 function ChapterRow({
   chapter,
+  reference,
   picked,
   disabled,
   onToggle,
@@ -524,15 +537,16 @@ function ChapterRow({
   chapter: {
     seq: number
     title: string
-    project: string
+    chapter: string
     kind: ChapterKind
     status: ChapterStatus
   }
+  reference: ChapterRef
   picked: boolean
   disabled: boolean
   onToggle: () => void
   onDelete: () => Promise<unknown>
-  onOpen: (project: string) => Promise<void>
+  onOpen: (reference: ChapterRef) => Promise<void>
 }) {
   const { t } = useTranslation()
   const [opening, setOpening] = useState(false)
@@ -541,7 +555,7 @@ function ChapterRow({
     if (opening) return
     setOpening(true)
     try {
-      await onOpen(chapter.project)
+      await onOpen(reference)
     } finally {
       setOpening(false)
     }
@@ -581,6 +595,7 @@ function ChapterRow({
         <span className='shrink-0 text-[9px] text-muted-foreground'>#{chapter.seq}</span>
       </button>
       <DeleteChaptersDialog
+        series={reference.series}
         chapters={[chapter]}
         trigger={
           <Button
@@ -603,13 +618,15 @@ function ChapterRow({
 /** Confirming a chapter deletion. Also used for the bulk case, where the same dialog names how many
  *  chapters are about to go: a bulk delete confirmed only by a count is the one people click through. */
 function DeleteChaptersDialog({
+  series,
   chapters,
   trigger,
   onConfirm,
 }: {
-  chapters: { title: string; project: string }[]
+  series: string
+  chapters: { title: string; chapter: string }[]
   trigger: React.ReactElement
-  onConfirm: (projects: string[]) => Promise<void>
+  onConfirm: (chapters: ChapterRef[]) => Promise<void>
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -618,7 +635,7 @@ function DeleteChaptersDialog({
   const confirm = async () => {
     setWorking(true)
     try {
-      await onConfirm(chapters.map((chapter) => chapter.project))
+      await onConfirm(chapters.map((chapter) => referenceOf(series, chapter)))
       setOpen(false)
     } finally {
       setWorking(false)

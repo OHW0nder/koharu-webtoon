@@ -52,15 +52,15 @@ pub(crate) async fn export(
     project: State<'_, CurrentProject>,
     desktop: State<'_, Desktop>,
 ) -> std::result::Result<(), Error> {
-    let (name, snapshot) = {
+    let (label, snapshot) = {
         let project = project.project.lock().await;
         let project = project.as_ref().context("no project is open")?;
-        (project.name.clone(), project.snapshot())
+        (project.label.clone(), project.snapshot())
     };
     if snapshot.pages().next().is_none() {
         return Err(anyhow::anyhow!("there are no pages to export").into());
     }
-    let Some(destination) = pick_destination(&window, format, &name).await else {
+    let Some(destination) = pick_destination(&window, format, &label).await else {
         return Ok(());
     };
     export_snapshot(snapshot, format, destination, &desktop).await?;

@@ -53,7 +53,8 @@ const preferences: Preferences = {
 }
 
 const project: ProjectInfo = {
-  name: 'Book',
+  reference: { series: 'Book', chapter: 'Chapter 1' },
+  label: 'Book - Chapter 1',
   revision: 3,
   active_page: null,
   can_undo: true,
@@ -90,7 +91,7 @@ function ProjectProbe() {
   return createElement(
     'span',
     null,
-    project === undefined ? 'Loading' : (project?.name ?? 'Closed'),
+    project === undefined ? 'Loading' : (project?.label ?? 'Closed'),
   )
 }
 
@@ -139,10 +140,11 @@ describe('Tauri runtime', () => {
     expect(rename).toHaveBeenCalledWith('page', 'Chapter 1')
   })
 
-  it('passes the managed project name to open', async () => {
-    const open = vi.spyOn(commands, 'openProject').mockResolvedValue(null)
-    await expect(call(commands.openProject, 'Volume 1')).resolves.toBeNull()
-    expect(open).toHaveBeenCalledWith('Volume 1')
+  it('passes the chapter reference to open', async () => {
+    const open = vi.spyOn(commands, 'openChapter').mockResolvedValue(null)
+    const reference = { series: 'Volume 1', chapter: 'Chapter 1' }
+    await expect(call(commands.openChapter, reference)).resolves.toBeNull()
+    expect(open).toHaveBeenCalledWith(reference)
   })
 
   it('applies independent channel updates directly to the store', async () => {

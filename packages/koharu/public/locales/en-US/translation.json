@@ -377,6 +377,17 @@
       "visionDescription": "Feed page images to the LLM during translation."
     },
     "loading": "Loading preferences…",
+    "library": {
+      "apply": "Use this folder",
+      "browse": "Choose folder",
+      "description": "Where imported series are written. Every series gets a folder of its own, and every chapter a folder inside it.",
+      "folder": "Folder",
+      "folderDescription": "The folder in use right now.",
+      "location": "Storage location",
+      "locationDescription": "Read once at startup, so a change takes effect after a restart.",
+      "restartNotice": "Restart Koharu to start using it. Nothing is moved for you: delete or move the series in the old folder first, or the change is refused.",
+      "title": "Library"
+    },
     "pipeline": {
       "description": "Choose the models and options used to process each page.",
       "modelLabel": "{{stage}} model",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "Appearance",
+      "library": "Library",
       "pipeline": "Pipeline",
       "providers": "Providers",
       "shortcuts": "Shortcuts",

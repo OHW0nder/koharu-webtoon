@@ -13,7 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/p
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@koharu/ui/components/tooltip'
 
-import { OrphanedProjects } from './OrphanedProjects'
+import { OrphanedChapters } from './OrphanedChapters'
 
 export function StartView() {
   const { t } = useTranslation()
@@ -91,7 +91,7 @@ export function StartView() {
         )}
       </section>
 
-      <OrphanedProjects />
+      <OrphanedChapters />
     </ScrollArea>
   )
 }

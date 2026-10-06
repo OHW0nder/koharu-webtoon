@@ -13,14 +13,16 @@ export const commands = {
 	runAgent: (prompt: string, onEvent: Channel<Event>) => __TAURI_INVOKE<RunId>("run_agent", { prompt, onEvent }),
 	cancelAgent: (run: RunId) => __TAURI_INVOKE<null>("cancel_agent", { run }),
 	subscribe: (onCanvas: Channel<CanvasState>, onJob: Channel<Job>, onDownload: Channel<Download>, onResources: Channel<ModelResources>, onProject: Channel<{
-	name: string,
+	reference: ChapterRef,
+	label: string,
 	revision: Revision,
 	active_page: EntityId | null,
 	can_undo: boolean,
 	can_redo: boolean,
 } | null>) => __TAURI_INVOKE<StartupState>("subscribe", { onCanvas: mapChannel(onCanvas, (v) => ({...v,revision:v.revision==null?v.revision:v.revision})), onJob, onDownload, onResources: mapChannel(onResources, (v) => ({...v,devices:v.devices.map(i=>({...i,memory_budget:i.memory_budget==null?i.memory_budget:i.memory_budget,memory_used:i.memory_used==null?i.memory_used:i.memory_used,utilization:i.utilization==null?i.utilization:i.utilization}))})), onProject }).then((v) => (({...v,preferences:({...v.preferences,pipeline:({...v.preferences.pipeline,translation:({...v.preferences.pipeline.translation,generation:({...v.preferences.pipeline.translation.generation,temperature:v.preferences.pipeline.translation.generation.temperature==null?v.preferences.pipeline.translation.generation.temperature:v.preferences.pipeline.translation.generation.temperature,top_p:v.preferences.pipeline.translation.generation.top_p==null?v.preferences.pipeline.translation.generation.top_p:v.preferences.pipeline.translation.generation.top_p,min_p:v.preferences.pipeline.translation.generation.min_p==null?v.preferences.pipeline.translation.generation.min_p:v.preferences.pipeline.translation.generation.min_p,repeat_penalty:v.preferences.pipeline.translation.generation.repeat_penalty==null?v.preferences.pipeline.translation.generation.repeat_penalty:v.preferences.pipeline.translation.generation.repeat_penalty,frequency_penalty:v.preferences.pipeline.translation.generation.frequency_penalty==null?v.preferences.pipeline.translation.generation.frequency_penalty:v.preferences.pipeline.translation.generation.frequency_penalty,presence_penalty:v.preferences.pipeline.translation.generation.presence_penalty==null?v.preferences.pipeline.translation.generation.presence_penalty:v.preferences.pipeline.translation.generation.presence_penalty})}),processor:({...v.preferences.pipeline.processor,"koharu-layout-rfdetr-seg-2xl":v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]:({...v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"],text_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold,bubble_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold,panel_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold})})})}),jobs:v.jobs.map(i=>i),canvas:({...v.canvas,revision:v.canvas.revision==null?v.canvas.revision:v.canvas.revision})}) as typeof v)),
 	getProject: () => __TAURI_INVOKE<{
-	name: string,
+	reference: ChapterRef,
+	label: string,
 	revision: Revision,
 	active_page: EntityId | null,
 	can_undo: boolean,
@@ -34,7 +36,7 @@ export const commands = {
 	layers: Layer[],
 	regions: AnalysisRegion[],
 } | null>("get_page").then((v) => (v==null?v:({...v,layers:v.layers.map(i=>i),regions:v.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))}) as typeof v)),
-	openProject: (name: string) => __TAURI_INVOKE<null>("open_project", { name }),
+	openChapter: (reference: ChapterRef) => __TAURI_INVOKE<null>("open_chapter", { reference }),
 	closeProject: () => __TAURI_INVOKE<null>("close_project"),
 	/**  漫画柜里的全部漫画。 */
 	listSeries: () => __TAURI_INVOKE<SeriesSummary[]>("list_series"),
@@ -128,8 +130,8 @@ export const commands = {
 	/**
 	 *  删掉一章，连同它的章项目。
 	 * 
-	 *  **删除的语义是「这一章导错了，之后会重新导入同一话」，所以项目必须一起删。** 重导的项目名是
-	 *  `<漫画名> Ch<序号>`，与被删的那个同名；留着它，`projects.create` 会直接撞名，于是「重新导入」这条路
+	 *  **删除的语义是「这一章导错了，之后会重新导入同一话」，所以目录必须一起删。** 重导的那一章会拿回
+	 *  同一个序号，于是落在同一个章目录名上；留着它，`projects.create` 会直接撞名，于是「重新导入」这条路
 	 *  走不通（`docs/series-management-design.md` §1）。
 	 * 
 	 *  **其余章的序号一个都不动。** 序号是 `context-<序号>.json` 的键，也是「下一章」判定的依据，重排会让
@@ -137,7 +139,7 @@ export const commands = {
 	 *  导入的章节由 [`next_seq`] 把这个空洞补回去，于是重导的那一章拿回原来的位置，上文也就仍然来自它
 	 *  前面那一章。
 	 */
-	deleteSeriesChapter: (id: string, project: string) => __TAURI_INVOKE<Series>("delete_series_chapter", { id, project }),
+	deleteSeriesChapter: (id: string, reference: ChapterRef) => __TAURI_INVOKE<Series>("delete_series_chapter", { id, reference }),
 	/**
 	 *  删掉一部漫画，连同它的全部章项目。
 	 * 
@@ -150,21 +152,21 @@ export const commands = {
 	/**
 	 *  列出没有任何漫画认领的章项目。
 	 * 
-	 *  **「未认领」不是一类合法对象，而是残骸。** 每个项目都恰好属于一部漫画的一个章
+	 *  **「未认领」不是一类合法对象，而是残骸。** 每个章项目都恰好属于一部漫画的一个章
 	 *  （`docs/series-management-design.md` §1），所以能被列出来的只有两种来源：导入在写索引之前
 	 *  中断了，或者索引被手工删掉了。它们进不了漫画柜，也没有别的入口能删——正是这里补上的那个。
 	 * 
-	 *  叫「孤立项目」而不是「未分组项目」：后者听起来像一个可以继续编辑的地方，而这里的东西没有
+	 *  叫「孤立章」而不是「未分组章」：后者听起来像一个可以继续编辑的地方，而这里的东西没有
 	 *  主人，只能清理掉。
 	 */
-	listOrphanedProjects: () => __TAURI_INVOKE<ProjectSummary[]>("list_orphaned_projects"),
+	listOrphanedChapters: () => __TAURI_INVOKE<ChapterRef[]>("list_orphaned_chapters"),
 	/**
-	 *  删掉一个孤立项目。
+	 *  删掉一个孤立章。
 	 * 
-	 *  守卫是它确实孤立：被认领的项目必须先从它那一章删掉，否则索引里会留下一个打不开的章条目，
+	 *  守卫是它确实孤立：被认领的章必须先从它那一章删掉，否则索引里会留下一个打不开的章条目，
 	 *  而那正是这个入口最初要收拾的烂摊子，不该由它再制造一次。
 	 */
-	deleteOrphanedProject: (name: string) => __TAURI_INVOKE<null>("delete_orphaned_project", { name }),
+	deleteOrphanedChapter: (reference: ChapterRef) => __TAURI_INVOKE<null>("delete_orphaned_chapter", { reference }),
 	/**
 	 *  重新指定源目录。
 	 * 
@@ -183,7 +185,7 @@ export const commands = {
 	 *  窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。还原由 [`start_job`] 在每章跑完后
 	 *  做，漫画的资料因此不会漏进设置页。
 	 */
-	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<SeriesRun>("process_series_chapters", { id, projects, operation }),
+	processSeriesChapters: (id: string, chapters: ChapterRef[], operation: Operation) => __TAURI_INVOKE<SeriesRun>("process_series_chapters", { id, chapters, operation }),
 	/**
 	 *  Exports the chosen chapters as one archive that keeps the shelf's shape.
 	 * 
@@ -199,7 +201,7 @@ export const commands = {
 	 *  Rendering is a serial loop because the kernel holds one open project at a time, and each chapter
 	 *  is written into the archive as soon as it is rendered — the whole volume is never in memory at once.
 	 */
-	exportSeriesChapters: (id: string, projects: string[]) => __TAURI_INVOKE<null>("export_series_chapters", { id, projects }),
+	exportSeriesChapters: (id: string, chapters: ChapterRef[]) => __TAURI_INVOKE<null>("export_series_chapters", { id, chapters }),
 	selectPage: (page: EntityId) => __TAURI_INVOKE<PageSelection>("select_page", { page }).then((v) => (({...v,page:({...v.page,layers:v.page.layers.map(i=>i),regions:v.page.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))})}) as typeof v)),
 	renamePage: (page: EntityId, label: string) => __TAURI_INVOKE<null>("rename_page", { page, label }),
 	deletePages: (pages: EntityId[]) => __TAURI_INVOKE<null>("delete_pages", { pages }),
@@ -228,6 +230,26 @@ export const commands = {
 	savePreferences: (pipeline: PipelineConfig, providers: ProviderPreferences, typesetting: TypesettingConfig) => __TAURI_INVOKE<Preferences>("save_preferences", { pipeline: ({...pipeline,translation:({...pipeline.translation,generation:({...pipeline.translation.generation,temperature:pipeline.translation.generation.temperature==null?pipeline.translation.generation.temperature:pipeline.translation.generation.temperature,top_p:pipeline.translation.generation.top_p==null?pipeline.translation.generation.top_p:pipeline.translation.generation.top_p,min_p:pipeline.translation.generation.min_p==null?pipeline.translation.generation.min_p:pipeline.translation.generation.min_p,repeat_penalty:pipeline.translation.generation.repeat_penalty==null?pipeline.translation.generation.repeat_penalty:pipeline.translation.generation.repeat_penalty,frequency_penalty:pipeline.translation.generation.frequency_penalty==null?pipeline.translation.generation.frequency_penalty:pipeline.translation.generation.frequency_penalty,presence_penalty:pipeline.translation.generation.presence_penalty==null?pipeline.translation.generation.presence_penalty:pipeline.translation.generation.presence_penalty})}),processor:({...pipeline.processor,"koharu-layout-rfdetr-seg-2xl":pipeline.processor["koharu-layout-rfdetr-seg-2xl"]==null?pipeline.processor["koharu-layout-rfdetr-seg-2xl"]:({...pipeline.processor["koharu-layout-rfdetr-seg-2xl"],text_threshold:pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold==null?pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold:pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold,bubble_threshold:pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold==null?pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold:pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold,panel_threshold:pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold==null?pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold:pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold})})}), providers, typesetting }).then((v) => (({...v,pipeline:({...v.pipeline,translation:({...v.pipeline.translation,generation:({...v.pipeline.translation.generation,temperature:v.pipeline.translation.generation.temperature==null?v.pipeline.translation.generation.temperature:v.pipeline.translation.generation.temperature,top_p:v.pipeline.translation.generation.top_p==null?v.pipeline.translation.generation.top_p:v.pipeline.translation.generation.top_p,min_p:v.pipeline.translation.generation.min_p==null?v.pipeline.translation.generation.min_p:v.pipeline.translation.generation.min_p,repeat_penalty:v.pipeline.translation.generation.repeat_penalty==null?v.pipeline.translation.generation.repeat_penalty:v.pipeline.translation.generation.repeat_penalty,frequency_penalty:v.pipeline.translation.generation.frequency_penalty==null?v.pipeline.translation.generation.frequency_penalty:v.pipeline.translation.generation.frequency_penalty,presence_penalty:v.pipeline.translation.generation.presence_penalty==null?v.pipeline.translation.generation.presence_penalty:v.pipeline.translation.generation.presence_penalty})}),processor:({...v.pipeline.processor,"koharu-layout-rfdetr-seg-2xl":v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]:({...v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"],text_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold,bubble_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold,panel_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold})})})}) as typeof v)),
 	getPreferences: () => __TAURI_INVOKE<Preferences>("get_preferences").then((v) => (({...v,pipeline:({...v.pipeline,translation:({...v.pipeline.translation,generation:({...v.pipeline.translation.generation,temperature:v.pipeline.translation.generation.temperature==null?v.pipeline.translation.generation.temperature:v.pipeline.translation.generation.temperature,top_p:v.pipeline.translation.generation.top_p==null?v.pipeline.translation.generation.top_p:v.pipeline.translation.generation.top_p,min_p:v.pipeline.translation.generation.min_p==null?v.pipeline.translation.generation.min_p:v.pipeline.translation.generation.min_p,repeat_penalty:v.pipeline.translation.generation.repeat_penalty==null?v.pipeline.translation.generation.repeat_penalty:v.pipeline.translation.generation.repeat_penalty,frequency_penalty:v.pipeline.translation.generation.frequency_penalty==null?v.pipeline.translation.generation.frequency_penalty:v.pipeline.translation.generation.frequency_penalty,presence_penalty:v.pipeline.translation.generation.presence_penalty==null?v.pipeline.translation.generation.presence_penalty:v.pipeline.translation.generation.presence_penalty})}),processor:({...v.pipeline.processor,"koharu-layout-rfdetr-seg-2xl":v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]:({...v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"],text_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold,bubble_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold,panel_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold==null?v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold:v.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold})})})}) as typeof v)),
 	getTranslationModels: () => __TAURI_INVOKE<Model[]>("get_translation_models"),
+	/**
+	 *  漫画库根目录，也就是界面上显示的那个位置。
+	 * 
+	 *  报的是磁盘上真正在用的目录，不是配置文件里那一份：用户没有指定时它是解析出来的默认值，而配置里
+	 *  并不存在那一项。
+	 */
+	getLibraryRoot: () => __TAURI_INVOKE<string>("get_library_root"),
+	/**
+	 *  指定漫画库根目录。
+	 * 
+	 *  **只写配置，不搬数据。** 库在启动时解析一次位置并持有它，所以改完要重启才生效。因此库里已经装了
+	 *  漫画时直接拒绝：让用户以为换位置只是改个设置，重启后看到空库再重新导入一遍，比现在多问一句糟糕得多。
+	 */
+	setLibraryRoot: (root: string) => __TAURI_INVOKE<null>("set_library_root", { root }),
+	/**
+	 *  打开文件夹选择器，返回用户挑的位置，取消则返回 `None`。
+	 * 
+	 *  选择器留在后端，因为 `rfd` 需要窗口句柄；与章目录那个选择器是同一个理由，所以也是同一种写法。
+	 */
+	pickLibraryFolder: () => __TAURI_INVOKE<string | null>("pick_library_folder"),
 	getCanvasManifest: (generation: CanvasGeneration) => __TAURI_INVOKE<CanvasBytes>("get_canvas_manifest", { generation }),
 	getCanvasResource: (generation: CanvasGeneration, resource: string) => __TAURI_INVOKE<CanvasBytes>("get_canvas_resource", { generation, resource }),
 	prepareCanvasPage: (page: EntityId) => __TAURI_INVOKE<{
@@ -314,6 +336,20 @@ export type ChapterKind =
 "manga" | 
 /**  条漫：一张纵向长图，按可读高度切页。 */
 "webtoon";
+
+/**
+ *  一章的身份：漫画目录名 + 章目录名。
+ * 
+ *  内核认不出这两个名字——它只收一个路径，项目身份是 `create` 时生成的 `DocumentId`，与路径和
+ *  名字都无关。所以路径推导是这一层的事，而推导所需的全部信息就是这两段目录名。合成一个结构，
+ *  章项目路径便只有一个出处。
+ */
+export type ChapterRef = {
+	/**  漫画目录名，库根目录的直接子目录。 */
+	series: string,
+	/**  章目录名，漫画目录下的直接子目录。 */
+	chapter: string,
+};
 
 /**  一章的编排状态。 */
 export type ChapterStatus = 
@@ -688,15 +724,12 @@ export type ProcessorConfig = {
 };
 
 export type ProjectInfo = {
-	name: string,
+	reference: ChapterRef,
+	label: string,
 	revision: Revision,
 	active_page: EntityId | null,
 	can_undo: boolean,
 	can_redo: boolean,
-};
-
-export type ProjectSummary = {
-	name: string,
 };
 
 export type Provider = "local" | "openai" | "gemini" | "claude" | "grok" | "minimax" | "deepseek" | "openai-compatible" | "openrouter" | "lm-studio" | "deepl" | "google-cloud-translation" | "caiyun";
@@ -759,8 +792,8 @@ export type Series = {
 export type SeriesChapter = {
 	seq: number,
 	title: string,
-	/**  章项目名，对应 `<root>/<project>.khrproj`。 */
-	project: string,
+	/**  章目录名，父目录由这部漫画的位置决定，两段合起来才是章的引用。 */
+	chapter: string,
 	/**  这一章的源形态，决定导入时是否切页。 */
 	kind: ChapterKind,
 	/**  编排状态，与章项目内部的处理状态分开。 */

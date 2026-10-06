@@ -64,7 +64,7 @@ export function Providers({ children }: { children: ReactNode }) {
           channel<ProjectInfo | null>((project) => {
             const previous = queryClient.getQueryData<ProjectInfo | null>(projectKey)
             queryClient.setQueryData(projectKey, project)
-            if (previous?.name !== project?.name) {
+            if (previous?.label !== project?.label) {
               const store = useKoharuStore.getState()
               store.selectPages(project?.active_page ? [project.active_page] : [])
               store.selectLayers([])

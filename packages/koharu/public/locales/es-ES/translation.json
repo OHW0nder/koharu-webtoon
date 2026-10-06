@@ -377,6 +377,17 @@
       "visionDescription": "Proporciona imágenes de las páginas al LLM durante la traducción."
     },
     "loading": "Cargando preferencias…",
+    "library": {
+      "apply": "Usar esta carpeta",
+      "browse": "Elegir carpeta",
+      "description": "Dónde se escriben las series importadas. Cada serie tiene su carpeta y, dentro, una carpeta por capítulo.",
+      "folder": "Carpeta",
+      "folderDescription": "La carpeta en uso ahora mismo.",
+      "location": "Ubicación",
+      "locationDescription": "Se lee una vez al iniciar, así que el cambio se aplica tras reiniciar.",
+      "restartNotice": "Se aplicará tras reiniciar Koharu. No se mueve nada por ti: borra o mueve primero las series de la carpeta antigua; de lo contrario el cambio se rechaza.",
+      "title": "Biblioteca"
+    },
     "pipeline": {
       "description": "Elige los modelos y opciones usados para procesar cada página.",
       "modelLabel": "Modelo de {{stage}}",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "Apariencia",
+      "library": "Biblioteca",
       "pipeline": "Canalización",
       "providers": "Proveedores",
       "shortcuts": "Atajos",

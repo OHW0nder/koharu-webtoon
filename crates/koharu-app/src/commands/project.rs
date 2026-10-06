@@ -15,7 +15,7 @@ use koharu_scene::{
     TextGroup as SceneTextGroup, TextLayout as SceneTextLayout, TextLayoutKind,
     Translation as SceneTranslation, Typography as SceneTypography, Visibility as SceneVisibility,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::sync::Mutex;
 
@@ -32,16 +32,42 @@ pub(crate) enum RasterStrokeMode {
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct ProjectInfo {
-    pub name: String,
+    pub reference: ChapterRef,
+    pub label: String,
     pub revision: Revision,
     pub active_page: Option<EntityId>,
     pub can_undo: bool,
     pub can_redo: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Type)]
-pub struct ProjectSummary {
-    pub name: String,
+/// 一章的身份：漫画目录名 + 章目录名。
+///
+/// 内核认不出这两个名字——它只收一个路径，项目身份是 `create` 时生成的 `DocumentId`，与路径和
+/// 名字都无关。所以路径推导是这一层的事，而推导所需的全部信息就是这两段目录名。合成一个结构，
+/// 章项目路径便只有一个出处。
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type)]
+pub struct ChapterRef {
+    /// 漫画目录名，库根目录的直接子目录。
+    pub series: String,
+    /// 章目录名，漫画目录下的直接子目录。
+    pub chapter: String,
+}
+
+/// 漫画库的位置。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibraryConfig {
+    /// 漫画库根目录，漫画目录是它的直接子目录。
+    ///
+    /// `None` 是「用户没有指定」。没指定时用哪个位置属于库自己的知识，而不是配置模式的默认值，
+    /// 所以解析留给 [`ProjectLibrary`]：配置只如实保存用户说了什么。
+    pub root: Option<PathBuf>,
+}
+
+impl LibraryConfig {
+    pub(crate) fn load() -> Result<koharu_config::Config<Self>> {
+        koharu_config::load("library")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Type)]
@@ -186,115 +212,178 @@ pub(crate) struct ProjectLibrary {
 
 impl ProjectLibrary {
     pub(crate) fn new() -> Result<Self> {
-        let root = dirs::document_dir()
-            .context("the Documents directory is unavailable")?
-            .join("Koharu");
+        let root = Self::resolve_root(LibraryConfig::load()?.read()?.root.clone())?;
         std::fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         Ok(Self { root })
     }
 
-    /// 项目目录的枚举，按最近使用排序。
+    /// 用户指定的位置优先，没指定才用平台默认。
     ///
-    /// 只在找「没有任何漫画认领的项目」时需要：每个项目都恰好属于一部漫画的一个章，所以这个
-    /// 集合与漫画索引一比，差集就是残骸——导入中断或索引被手工删掉之后留下的东西。它们进不了
-    /// 漫画柜，也没有别的入口能删，因此这里是唯一能把它们找出来的地方。
-    pub(crate) fn list(&self) -> Result<Vec<ProjectSummary>> {
-        let mut projects = std::fs::read_dir(&self.root)
+    /// 「没指定时去哪」是库自己的知识，所以解析留在这里而不是塞进配置的默认值：`Default` 拿不到
+    /// `Result`，硬写一个兜底会把 Documents 不可用这件事安静掉，而那正是启动失败最常见的原因。
+    fn resolve_root(configured: Option<PathBuf>) -> Result<PathBuf> {
+        let Some(root) = configured else {
+            return dirs::document_dir()
+                .context("the Documents directory is unavailable; choose a library folder instead")
+                .map(|documents| documents.join("Koharu"));
+        };
+        if root.as_os_str().is_empty() {
+            bail!("the library folder cannot be empty");
+        }
+        Ok(root)
+    }
+
+    /// 章项目目录的枚举，按最近使用排序。
+    ///
+    /// 只在找「没有任何漫画认领的章」时需要：每个章都恰好属于一部漫画，所以这个集合与漫画索引
+    /// 一比，差集就是残骸——导入在写索引之前中断，或索引被手工删掉之后留下的东西。
+    ///
+    /// 遍历两层而不查索引，因为索引可能正好是缺的那一份，而这一层存在的意义就是收拾那种残骸。
+    /// 认章的依据是目录形状而非任何后缀：漫画目录与章目录不在同一层，后缀已经没有区分作用。
+    pub(crate) fn list(&self) -> Result<Vec<ChapterRef>> {
+        let mut found = Vec::new();
+        for series in std::fs::read_dir(&self.root)
             .with_context(|| format!("failed to read {}", self.root.display()))?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .filter_map(|entry| {
-                let path = entry.path();
-                let is_project_directory = path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("khrproj"))
-                    && (path.join("state-a.khr").is_file() || path.join("state-b.khr").is_file());
-                if !is_project_directory {
-                    return None;
+        {
+            let series = series?;
+            if !series.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let Some(series_name) = series.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            for chapter in std::fs::read_dir(series.path())
+                .with_context(|| format!("failed to read {}", series.path().display()))?
+            {
+                let chapter = chapter?;
+                if !chapter.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    continue;
                 }
-                let last_used = ["state-a.khr", "state-b.khr"]
-                    .into_iter()
-                    .filter_map(|file| std::fs::metadata(path.join(file)).ok()?.modified().ok())
-                    .max()
-                    .unwrap_or(std::time::UNIX_EPOCH);
-                Some((
-                    last_used,
-                    ProjectSummary {
-                        name: path.file_stem()?.to_str()?.to_owned(),
+                if !is_project_directory(&chapter.path()) {
+                    continue;
+                }
+                let Some(chapter_name) = chapter.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                found.push((
+                    last_used(&chapter.path()),
+                    ChapterRef {
+                        series: series_name.clone(),
+                        chapter: chapter_name,
                     },
-                ))
+                ));
+            }
+        }
+        found.sort_unstable_by(|(left_used, left), (right_used, right)| {
+            right_used.cmp(left_used).then_with(|| {
+                left.series
+                    .to_lowercase()
+                    .cmp(&right.series.to_lowercase())
+                    .then_with(|| {
+                        left.chapter
+                            .to_lowercase()
+                            .cmp(&right.chapter.to_lowercase())
+                    })
             })
-            .collect::<Vec<_>>();
-        projects.sort_unstable_by(|(left_used, left), (right_used, right)| {
-            right_used
-                .cmp(left_used)
-                .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
         });
-        Ok(projects.into_iter().map(|(_, project)| project).collect())
+        Ok(found.into_iter().map(|(_, reference)| reference).collect())
     }
 
-    pub(crate) async fn create(&self, name: &str) -> Result<Project> {
-        let (name, path) = self.resolve(name)?;
-        Project::create(name, path).await
+    pub(crate) async fn create(
+        &self,
+        reference: &ChapterRef,
+        label: String,
+    ) -> Result<Project> {
+        Project::create(reference.clone(), label, self.resolve(reference)?).await
     }
 
-    pub(crate) async fn open(&self, name: &str) -> Result<Project> {
-        let (name, path) = self.resolve(name)?;
-        Project::open(name, path).await
+    pub(crate) async fn open(&self, reference: &ChapterRef, label: String) -> Result<Project> {
+        Project::open(reference.clone(), label, self.resolve(reference)?).await
     }
 
-    pub(crate) fn delete(&self, name: &str) -> Result<()> {
-        let (_, path) = self.resolve(name)?;
+    pub(crate) fn delete(&self, reference: &ChapterRef) -> Result<()> {
+        let path = self.resolve(reference)?;
         if !path.is_dir() {
-            bail!("project {name:?} does not exist");
+            bail!("{}/{chapter:?} does not exist", reference.series, chapter = reference.chapter);
         }
         std::fs::remove_dir_all(&path)
             .with_context(|| format!("failed to delete {}", path.display()))
     }
 
-    fn resolve(&self, name: &str) -> Result<(String, PathBuf)> {
-        let name = validate_project_name(name)?;
-        Ok((name.clone(), self.root.join(format!("{name}.khrproj"))))
+    /// 章项目目录：`<root>/<漫画目录>/<章目录>`。
+    ///
+    /// 两段各自校验，所以引用越不出漫画目录，漫画目录也越不出库根目录——`ChapterRef` 是从前端
+    /// 来的，不能假定它已经在磁盘上被验证过。
+    fn resolve(&self, reference: &ChapterRef) -> Result<PathBuf> {
+        let series =
+            validate_directory_name(&reference.series).context("the series directory name")?;
+        let chapter =
+            validate_directory_name(&reference.chapter).context("the chapter directory name")?;
+        Ok(self.root.join(series).join(chapter))
     }
 
-    /// The directory every project lives in. Series directories sit beside those projects, so the
-    /// series layer needs the root rather than re-deriving it from the environment: if the root
-    /// ever moves, one place decides.
+    /// 库根目录。漫画目录是它的直接子目录，章项目在漫画目录之下，所以漫画层要的是这个根而不是
+    /// 自己再推一遍位置：根只有一处决定。
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 }
 
+/// 一个目录是不是章项目。只认内核写的状态文件，所以索引、术语表、旁挂文件都自然被排除。
+fn is_project_directory(path: &Path) -> bool {
+    path.join("state-a.khr").is_file() || path.join("state-b.khr").is_file()
+}
+
+/// 章项目最近一次写入的时间，取两个状态槽里较新的那个。
+fn last_used(path: &Path) -> std::time::SystemTime {
+    ["state-a.khr", "state-b.khr"]
+        .into_iter()
+        .filter_map(|slot| std::fs::metadata(path.join(slot)).ok()?.modified().ok())
+        .max()
+        .unwrap_or(std::time::UNIX_EPOCH)
+}
+
 pub(crate) struct Project {
     pub(crate) session: Session,
-    pub(crate) name: String,
+    /// 这一章是谁。路径推导、归属反查、以及「已经打开这一章」的判断都用它。
+    pub(crate) reference: ChapterRef,
+    /// 人类可读的名。漫画名已经在父目录里，所以它补的是章标题，导出文件名靠它区分同一部漫画的各章。
+    pub(crate) label: String,
     pub(crate) active_page: Option<EntityId>,
     pub(crate) undo: Vec<Vec<Revision>>,
     pub(crate) redo: Vec<Vec<Revision>>,
 }
 
 impl Project {
-    pub(crate) async fn create(name: String, path: PathBuf) -> Result<Self> {
+    pub(crate) async fn create(
+        reference: ChapterRef,
+        label: String,
+        path: PathBuf,
+    ) -> Result<Self> {
         let session = Session::create(&path)
             .await
             .with_context(|| format!("failed to create {}", path.display()))?;
-        Ok(Self::new(session, name))
+        Ok(Self::new(session, reference, label))
     }
 
-    pub(crate) async fn open(name: String, path: PathBuf) -> Result<Self> {
+    pub(crate) async fn open(
+        reference: ChapterRef,
+        label: String,
+        path: PathBuf,
+    ) -> Result<Self> {
         let session = Session::open(&path)
             .await
             .with_context(|| format!("failed to open {}", path.display()))?;
-        Ok(Self::new(session, name))
+        Ok(Self::new(session, reference, label))
     }
 
-    fn new(session: Session, name: String) -> Self {
+    fn new(session: Session, reference: ChapterRef, label: String) -> Self {
         let active_page = session.snapshot().pages().next().map(|page| page.id());
         Self {
             session,
-            name,
+            reference,
+            label,
             active_page,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -331,7 +420,8 @@ impl Project {
 
     pub(crate) fn info(&self) -> ProjectInfo {
         ProjectInfo {
-            name: self.name.clone(),
+            reference: self.reference.clone(),
+            label: self.label.clone(),
             revision: self.revision(),
             active_page: self.active_page,
             can_undo: !self.undo.is_empty(),
@@ -1253,17 +1343,21 @@ impl Project {
     }
 }
 
-fn validate_project_name(name: &str) -> Result<String> {
+/// 一段目录名的合法性。
+///
+/// 漫画目录名与章目录名用的是同一套规则，所以规则只有这一处。它们各自构成路径的一段，因此禁掉
+/// 分隔符：路径不靠拼接出来的名字解析，而是靠名字本身就是一段干净的目录名。
+pub(crate) fn validate_directory_name(name: &str) -> Result<String> {
     let name = name.trim();
     if name.is_empty() {
-        bail!("project name cannot be empty");
+        bail!("a directory name cannot be empty");
     }
     if name.ends_with(['.', ' '])
         || name
             .chars()
             .any(|character| character.is_control() || r#"<>:"/\|?*"#.contains(character))
     {
-        bail!("project name contains characters that cannot be used in a file name");
+        bail!("{name:?} contains characters that cannot be used in a directory name");
     }
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
@@ -1274,7 +1368,7 @@ fn validate_project_name(name: &str) -> Result<String> {
                 matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
             })
     {
-        bail!("project name is reserved by Windows");
+        bail!("{name:?} is reserved by Windows");
     }
     Ok(name.to_owned())
 }
@@ -1393,7 +1487,11 @@ mod tests {
             .add_page(PageDraft::new("manual", 100.0, 100.0), At::End)
             .unwrap();
         session.commit(setup.finish().unwrap()).await.unwrap();
-        let mut project = Project::new(session, "test".to_owned());
+        let mut project = Project::new(
+            session,
+            ChapterRef { series: "series".to_owned(), chapter: "Chapter 1".to_owned() },
+            "series - Chapter 1".to_owned(),
+        );
 
         let base = project.snapshot();
         let pipeline = base

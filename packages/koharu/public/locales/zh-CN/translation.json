@@ -377,6 +377,17 @@
       "visionDescription": "翻译时将页面图像输入给 LLM。"
     },
     "loading": "正在加载偏好设置…",
+    "library": {
+      "apply": "使用这个文件夹",
+      "browse": "选择文件夹",
+      "description": "导入的漫画写到哪里。每部漫画一个文件夹，里面每一章再一个文件夹。",
+      "folder": "文件夹",
+      "folderDescription": "当前正在使用的文件夹。",
+      "location": "存储位置",
+      "locationDescription": "启动时读取一次，所以改完要重启才生效。",
+      "restartNotice": "重启 Koharu 后生效。已有漫画不会自动搬走：请先把旧文件夹里的漫画删掉或移走，否则这次修改会被拒绝。",
+      "title": "漫画库"
+    },
     "pipeline": {
       "description": "选择用于处理每个页面的模型和选项。",
       "modelLabel": "{{stage}}模型",
@@ -423,6 +434,7 @@
     },
     "tabs": {
       "appearance": "外观",
+      "library": "漫画库",
       "pipeline": "流水线",
       "providers": "提供商",
       "shortcuts": "快捷键",

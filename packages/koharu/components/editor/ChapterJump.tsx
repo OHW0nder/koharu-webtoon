@@ -14,7 +14,7 @@ import { ScrollArea } from '@koharu/ui/components/scroll-area'
 
 /** Switching chapters without leaving the editor.
  *
- *  `open_project` replaces the active project in place — it stops the running job, resets the agent
+ *  `open_chapter` replaces the active project in place — it stops the running job, resets the agent
  *  and republishes the canvas — so a jump is one command and there is no close-then-open round trip
  *  through the chapter list.
  *
@@ -32,7 +32,9 @@ export function ChapterJump() {
   const [switching, setSwitching] = useState<string | null>(null)
 
   const chapters = series.data?.chapters ?? []
-  const index = chapter ? chapters.findIndex((entry) => entry.project === chapter.project) : -1
+  const index = chapter
+    ? chapters.findIndex((entry) => entry.chapter === chapter.reference.chapter)
+    : -1
   const current = index >= 0 ? chapters[index] : undefined
   const previous = index > 0 ? chapters[index - 1] : undefined
   const following = index >= 0 && index + 1 < chapters.length ? chapters[index + 1] : undefined
@@ -40,12 +42,19 @@ export function ChapterJump() {
   // A chapter whose series is unknown is a project opened some other way. There is nothing to jump
   // to, so the control stays out of the way rather than showing an empty "0 / 0".
   if (!chapter || !current) return null
+  const seriesId = chapter.seriesId
 
-  const jump = async (project: string) => {
+  const jump = async (entry: { chapter: string }) => {
     if (switching) return
-    setSwitching(project)
+    setSwitching(entry.chapter)
     try {
-      await call(commands.openProject, project)
+      const reference = { series: seriesId, chapter: entry.chapter }
+      await call(commands.openChapter, reference)
+      // `open_chapter` replaces the project in place and never tells the shell which one it landed
+      // on, so the chapter named by the badge and the highlighted row has to follow it here.
+      // Leaving it behind points this control at a chapter that is no longer open, and the next
+      // click on the row the user just picked asks the kernel to reopen what it already holds.
+      showChapter({ seriesId, reference })
       setOpen(false)
     } finally {
       setSwitching(null)
@@ -60,7 +69,7 @@ export function ChapterJump() {
         variant='ghost'
         disabled={!previous || switching !== null || running}
         aria-label={t('navigator.previousChapter')}
-        onClick={() => previous && void jump(previous.project)}
+        onClick={() => previous && void jump(previous)}
         className='size-7 shrink-0 text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground'
       >
         <ChevronLeft className='size-4' />
@@ -95,13 +104,13 @@ export function ChapterJump() {
           <ScrollArea className='min-h-0 max-h-72' viewportClassName='max-h-72'>
             <ul className='grid gap-0.5'>
               {chapters.map((entry, position) => (
-                <li key={entry.project}>
+                <li key={entry.chapter}>
                   <button
                     type='button'
                     disabled={switching !== null || running}
-                    onClick={() => void jump(entry.project)}
+                    onClick={() => void jump(entry)}
                     className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[11px] transition-colors disabled:opacity-50 ${
-                      entry.project === chapter.project
+                      entry.chapter === chapter.reference.chapter
                         ? 'bg-accent text-accent-foreground'
                         : 'hover:bg-foreground/[0.05]'
                     }`}
@@ -110,7 +119,7 @@ export function ChapterJump() {
                       #{entry.seq}
                     </span>
                     <span className='min-w-0 flex-1 truncate'>{entry.title}</span>
-                    {switching === entry.project && (
+                    {switching === entry.chapter && (
                       <span className='size-3 shrink-0 animate-spin rounded-full border border-current border-t-transparent' />
                     )}
                     <span className='shrink-0 text-[9px] text-muted-foreground tabular-nums'>
@@ -130,7 +139,7 @@ export function ChapterJump() {
         variant='ghost'
         disabled={!following || switching !== null || running}
         aria-label={t('navigator.nextChapter')}
-        onClick={() => following && void jump(following.project)}
+        onClick={() => following && void jump(following)}
         className='size-7 shrink-0 text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground'
       >
         <ChevronRight className='size-4' />

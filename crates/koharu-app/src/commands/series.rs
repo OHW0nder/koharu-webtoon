@@ -1,16 +1,15 @@
 //! 漫画层：一部漫画作为一组章项目的索引，再加上漫画自己的数据。
 //!
-//! 内核只认项目（`.khrproj`），漫画不是内核概念，而是这一层维护的索引。两者不是解耦的：**每一个章
-//! 项目都恰好被一部漫画的一个章条目认领**，所以删除一路收在这一层——删章连带删它的项目，删漫画连带
-//! 删全部章项目。曾经存在过的「未认领的普通项目」这一类已经取消（`docs/series-management-design.md`
-//! §1），因为它让同一件事有两种归属方式，也让章项目的删除只有一半。
+//! 内核只认项目，漫画不是内核概念，而是这一层维护的索引。两者不是解耦的：**每一个章项目都恰好被
+//! 一部漫画的一个章条目认领**，所以删除一路收在这一层——删章连带删它的项目，删漫画连带删全部章
+//! 项目。曾经存在过的「未认领的普通项目」这一类已经取消（`docs/series-management-design.md` §1），
+//! 因为它让同一件事有两种归属方式，也让章项目的删除只有一半。
 //!
-//! 索引放在漫画目录里，因此它跟着漫画一起被移动、备份和删除。章在索引里只记项目名，因为
-//! 项目名是内核唯一稳定的公开标识；章项目在内核眼中仍然是普通项目，能被单独打开、单独
-//! 导出、单独跑流水线。
+//! 布局是两级：库根目录下是漫画目录，漫画目录下是章项目目录。内核的项目身份是 `create` 时生成的
+//! `DocumentId`，与路径无关，所以这个布局不需要内核配合——它只是把路径推导收在这一层。
 //!
-//! 漫画目录就是项目根目录下一个不带 `.khrproj` 后缀的文件夹，所以内核的项目枚举会自然跳过
-//! 它们，两套目录并存不需要改内核。
+//! 索引放在漫画目录里，因此它跟着漫画一起被移动、备份和删除。章在索引里记自己的目录名，父目录由
+//! 它所属的漫画决定，两段合起来才是 [`ChapterRef`]。
 
 use std::{
     collections::BTreeSet,
@@ -31,7 +30,7 @@ use super::{
     lifecycle::{close_current_project, replace_project},
     output::{self, ExportFormat},
     processing::{JobChannel, Processing, Subject, start_job},
-    project::{CurrentProject, ProjectLibrary, ProjectSummary},
+    project::{ChapterRef, CurrentProject, ProjectLibrary},
     reject_import_while_processing, reject_settings_while_processing,
 };
 use crate::injection;
@@ -408,8 +407,8 @@ pub(crate) const GLOSSARY_FILE: &str = "glossary.json";
 pub struct SeriesChapter {
     pub seq: u32,
     pub title: String,
-    /// 章项目名，对应 `<root>/<project>.khrproj`。
-    pub project: String,
+    /// 章目录名，父目录由这部漫画的位置决定，两段合起来才是章的引用。
+    pub chapter: String,
     /// 这一章的源形态，决定导入时是否切页。
     pub kind: ChapterKind,
     /// 编排状态，与章项目内部的处理状态分开。
@@ -485,12 +484,9 @@ impl SeriesLibrary {
             if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 continue;
             }
-            let Some(id) = entry
-                .path()
-                .file_stem()
-                .and_then(|id| id.to_str())
-                .map(str::to_owned)
-            else {
+            // 目录名整体就是标识，不能只取到第一个点之前：`sanitize` 允许标题里带点，而章引用要拿这
+            // 个名字去拼路径，截断过的名字会指向一个不存在的目录。
+            let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
             if let Ok(series) = self.read(&id) {
@@ -518,28 +514,34 @@ impl SeriesLibrary {
         Ok(entries.into_iter().map(|(_, series)| series.into()).collect())
     }
 
-    /// 全部漫画已认领的章项目名。
+    /// 全部漫画已认领的章。
     ///
-    /// 章项目与漫画共用项目根目录、同一套 `.khrproj` 实体，所以「有没有主人」完全取决于索引
-    /// 里有没有它。与漫画索引一比，差集就是孤立项目（见 [`list_orphaned_projects`]）。
-    pub(crate) fn claimed_projects(&self) -> Result<BTreeSet<String>> {
+    /// 章项目在漫画目录下，所以「有没有主人」完全取决于它所属漫画的索引里有没有这一条。与全部
+    /// 索引一比，差集就是残骸（见 [`list_orphaned_chapters`]）。
+    pub(crate) fn claimed_chapters(&self) -> Result<BTreeSet<ChapterRef>> {
         Ok(self
             .indices()?
             .into_iter()
-            .flat_map(|series| series.chapters.into_iter().map(|chapter| chapter.project))
+            .flat_map(|series| {
+                let parent = series.id.clone();
+                series
+                    .chapters
+                    .into_iter()
+                    .map(move |chapter| reference_of(&parent, &chapter))
+            })
             .collect())
     }
 
-    /// 反查这个项目属于哪部漫画。
+    /// 反查这一章属于哪部漫画。
     ///
-    /// 章在索引里只记项目名，所以归属就是一次字符串匹配。每个项目都属于且只属于一部漫画
-    /// （`docs/series-management-design.md` §1），所以查不到只可能是章项目已经被删掉而索引没跟上——那是
-    /// 损坏的索引，而不是一种合法的「独立项目」。
-    pub(crate) fn owning_series(&self, project: &str) -> Result<Option<Series>> {
-        Ok(self
-            .indices()?
-            .into_iter()
-            .find(|series| series.chapters.iter().any(|chapter| chapter.project == project)))
+    /// 归属就是拿引用里的两段去比索引。每个章都属于且只属于一部漫画（`docs/series-management-design.md`
+    /// §1），所以查不到只可能是章目录还在而索引没跟上——那是损坏的索引，而不是一种合法的「独立章」。
+    pub(crate) fn owning_series(&self, reference: &ChapterRef) -> Result<Option<Series>> {
+        Ok(self.indices()?.into_iter().find(|series| {
+            series.chapters.iter().any(|chapter| {
+                chapter.chapter == reference.chapter && series.id == reference.series
+            })
+        }))
     }
 
     /// 读一部漫画，章按序号排序。
@@ -579,6 +581,23 @@ impl SeriesLibrary {
     /// 漫画目录。注入层把资料与旁挂文件挂在它下面，所以那层拿目录而不是重新推一遍位置。
     pub(crate) fn path(&self, id: &str) -> PathBuf {
         self.root.join(id)
+    }
+
+    /// 一章的可读名。
+    ///
+    /// 读不到索引就退回章目录名：残骸也要能被打开来看一眼，而它本来就没有章标题。这里刻意不让它
+    /// 失败——为了一个临时显示名而挡住用户看一眼东西，代价比这里大得多。
+    pub(crate) fn chapter_label(&self, reference: &ChapterRef) -> String {
+        let Ok(series) = self.read(&reference.series) else {
+            return reference.chapter.clone();
+        };
+        series
+            .chapters
+            .iter()
+            .find(|chapter| chapter.chapter == reference.chapter)
+            .map_or_else(|| reference.chapter.clone(), |chapter| {
+                chapter_label(&series, chapter)
+            })
     }
 }
 
@@ -724,6 +743,28 @@ fn next_seq(chapters: &[SeriesChapter]) -> u32 {
         .expect("the ceiling sits above every taken slot")
 }
 
+/// 章目录名。
+///
+/// 漫画名已经在父目录里，所以目录只需要序号。它因此不可能与另一部漫画的章撞名——原先那种「两部
+/// 漫画同名的章第二次导入直接失败」的情况，在按漫画分层之后就不存在了。用户看到的是章标题，
+/// 不是这个目录名。
+fn chapter_directory(seq: u32) -> String {
+    format!("Chapter {seq}")
+}
+
+/// 章的引用。父目录由这部漫画的位置决定，所以两段合起来才够定位一个章项目。
+fn reference_of(series: &str, chapter: &SeriesChapter) -> ChapterRef {
+    ChapterRef {
+        series: series.to_owned(),
+        chapter: chapter.chapter.clone(),
+    }
+}
+
+/// 章的人类可读名。导出文件名用它，因为章目录名只有序号，认不出是哪一部漫画的哪一话。
+pub(crate) fn chapter_label(series: &Series, chapter: &SeriesChapter) -> String {
+    format!("{} - {}", series.title, chapter.title)
+}
+
 /// 把广告带的执行结果写成一条日志。
 ///
 /// 跳过不是错误，但用户需要知道它发生了：广告高度设得比某些源图允许的更大时，那几张图会整张
@@ -802,18 +843,18 @@ pub(crate) async fn import_series_chapter(
 
     // 序号补最小的空洞，所以删掉第 20 章之后重新导入它会拿回 20，自然落回 19 与 21 之间。
     let seq = next_seq(&series.chapters);
-    let stem = sanitize(&series.title);
-    let stem = if stem.is_empty() { "series" } else { &stem };
-    let project_name = format!("{stem} Ch{seq}");
-    series.chapters.push(SeriesChapter {
+    let chapter = SeriesChapter {
         seq,
         title: name.clone(),
-        project: project_name.clone(),
+        chapter: chapter_directory(seq),
         kind,
         status: ChapterStatus::Ready,
-    });
+    };
+    let reference = reference_of(&series.id, &chapter);
+    let label = chapter_label(&series, &chapter);
+    series.chapters.push(chapter);
 
-    let mut project = projects.create(&project_name).await?;
+    let mut project = projects.create(&reference, label).await?;
     let outcome = async {
         report_ad_bands(&series.id, &ad_bands);
         import::apply(&mut project, pages).await?;
@@ -822,11 +863,11 @@ pub(crate) async fn import_series_chapter(
     .await;
     if let Err(error) = outcome {
         // 项目建好而索引没写进去，这一章就成了没有主人的残骸；它连候选列表都进不去，重试会撞上
-        // 同名项目。删掉它，失败的那一趟才真的没有留下东西。
-        rollback_projects(&projects, std::slice::from_ref(&project_name)).await;
+        // 同名目录。删掉它，失败的那一趟才真的没有留下东西。
+        rollback_projects(&projects, std::slice::from_ref(&reference)).await;
         series
             .chapters
-            .retain(|chapter| !(chapter.project == project_name && chapter.title == name));
+            .retain(|chapter| !(chapter.chapter == reference.chapter && chapter.title == name));
         return Err(error.into());
     }
     Ok(series)
@@ -837,7 +878,7 @@ pub(crate) async fn import_series_chapter(
 /// 活动项目不能直接删：内核里还持有一份打开的场景，所以先走正常的关闭路径。
 async fn delete_chapter_project(
     handle: &AppHandle<CefRuntime>,
-    project: &str,
+    reference: &ChapterRef,
     library: ProjectLibrary,
 ) -> Result<()> {
     let active = handle
@@ -846,21 +887,21 @@ async fn delete_chapter_project(
         .lock()
         .await
         .as_ref()
-        .is_some_and(|open| open.name == project);
+        .is_some_and(|open| &open.reference == reference);
     if active {
         close_current_project(handle).await?;
     }
-    // 阻塞任务要 `'static`，所以名字得自己拥有，不能把借用送进去。
-    let owned = project.to_owned();
+    // 阻塞任务要 `'static`，所以引用得自己拥有，不能把借用送进去。
+    let owned = reference.clone();
     tokio::task::spawn_blocking(move || library.delete(&owned))
         .await
-        .context("project deletion task failed")?
+        .context("chapter deletion task failed")?
 }
 
 /// 删掉一章，连同它的章项目。
 ///
-/// **删除的语义是「这一章导错了，之后会重新导入同一话」，所以项目必须一起删。** 重导的项目名是
-/// `<漫画名> Ch<序号>`，与被删的那个同名；留着它，`projects.create` 会直接撞名，于是「重新导入」这条路
+/// **删除的语义是「这一章导错了，之后会重新导入同一话」，所以目录必须一起删。** 重导的那一章会拿回
+/// 同一个序号，于是落在同一个章目录名上；留着它，`projects.create` 会直接撞名，于是「重新导入」这条路
 /// 走不通（`docs/series-management-design.md` §1）。
 ///
 /// **其余章的序号一个都不动。** 序号是 `context-<序号>.json` 的键，也是「下一章」判定的依据，重排会让
@@ -872,7 +913,7 @@ async fn delete_chapter_project(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn delete_series_chapter(
     id: String,
-    project: String,
+    reference: ChapterRef,
     handle: AppHandle<CefRuntime>,
     projects: State<'_, ProjectLibrary>,
     library: State<'_, SeriesLibrary>,
@@ -885,18 +926,18 @@ pub(crate) async fn delete_series_chapter(
     let Some(chapter) = series
         .chapters
         .iter()
-        .find(|chapter| chapter.project == project)
+        .find(|chapter| chapter.chapter == reference.chapter)
         .cloned()
     else {
-        tracing::info!(series = %id, chapter = %project, "the chapter was already gone");
+        tracing::info!(series = %id, chapter = %reference.chapter, "the chapter was already gone");
         return Ok(series);
     };
-    delete_chapter_project(&handle, &project, projects.inner().clone()).await?;
+    delete_chapter_project(&handle, &reference, projects.inner().clone()).await?;
     // 其余章的序号一个都不动。删掉第 20 章之后 21 仍然是 21：位置属于用户的作品结构，系统不替他
     // 补位——他重新导入第 20 章时，那个空洞正好留给它。
-    series.chapters.retain(|entry| entry.project != project);
+    series.chapters.retain(|entry| entry.chapter != reference.chapter);
     library.write(&series)?;
-    tracing::info!(series = %id, chapter = %project, seq = chapter.seq, "deleted a chapter");
+    tracing::info!(series = %id, chapter = %reference.chapter, seq = chapter.seq, "deleted a chapter");
     Ok(series)
 }
 
@@ -927,7 +968,7 @@ pub(crate) async fn delete_series(
     let series = library.read(&id)?;
     let projects = projects.inner().clone();
     for chapter in &series.chapters {
-        delete_chapter_project(&handle, &chapter.project, projects.clone()).await?;
+        delete_chapter_project(&handle, &reference_of(&id, chapter), projects.clone()).await?;
     }
     let shown = directory.clone();
     tokio::task::spawn_blocking(move || fs::remove_dir_all(&directory))
@@ -957,43 +998,48 @@ pub(crate) async fn pick_chapter_folder(
 
 /// 列出没有任何漫画认领的章项目。
 ///
-/// **「未认领」不是一类合法对象，而是残骸。** 每个项目都恰好属于一部漫画的一个章
+/// **「未认领」不是一类合法对象，而是残骸。** 每个章项目都恰好属于一部漫画的一个章
 /// （`docs/series-management-design.md` §1），所以能被列出来的只有两种来源：导入在写索引之前
 /// 中断了，或者索引被手工删掉了。它们进不了漫画柜，也没有别的入口能删——正是这里补上的那个。
 ///
-/// 叫「孤立项目」而不是「未分组项目」：后者听起来像一个可以继续编辑的地方，而这里的东西没有
+/// 叫「孤立章」而不是「未分组章」：后者听起来像一个可以继续编辑的地方，而这里的东西没有
 /// 主人，只能清理掉。
 #[tauri::command]
 #[specta::specta]
-pub(crate) fn list_orphaned_projects(
+pub(crate) fn list_orphaned_chapters(
     projects: State<'_, ProjectLibrary>,
     series: State<'_, SeriesLibrary>,
-) -> std::result::Result<Vec<ProjectSummary>, Error> {
-    let claimed = series.claimed_projects()?;
+) -> std::result::Result<Vec<ChapterRef>, Error> {
+    let claimed = series.claimed_chapters()?;
     let orphans = projects
         .list()?
         .into_iter()
-        .filter(|project| !claimed.contains(&project.name))
+        .filter(|reference| !claimed.contains(reference))
         .collect();
     Ok(orphans)
 }
 
-/// 删掉一个孤立项目。
+/// 删掉一个孤立章。
 ///
-/// 守卫是它确实孤立：被认领的项目必须先从它那一章删掉，否则索引里会留下一个打不开的章条目，
+/// 守卫是它确实孤立：被认领的章必须先从它那一章删掉，否则索引里会留下一个打不开的章条目，
 /// 而那正是这个入口最初要收拾的烂摊子，不该由它再制造一次。
 #[tauri::command]
 #[specta::specta]
-pub(crate) fn delete_orphaned_project(
-    name: String,
+pub(crate) fn delete_orphaned_chapter(
+    reference: ChapterRef,
     projects: State<'_, ProjectLibrary>,
     series: State<'_, SeriesLibrary>,
 ) -> std::result::Result<(), Error> {
-    if series.owning_series(&name)?.is_some() {
-        return Err(anyhow::anyhow!("{name} belongs to a series; delete that chapter instead").into());
+    if series.owning_series(&reference)?.is_some() {
+        return Err(anyhow::anyhow!(
+            "{series}/{chapter:?} belongs to a series; delete that chapter instead",
+            series = reference.series,
+            chapter = reference.chapter
+        )
+        .into());
     }
-    projects.delete(&name)?;
-    tracing::info!(project = %name, "deleted an orphaned project");
+    projects.delete(&reference)?;
+    tracing::info!(series = %reference.series, chapter = %reference.chapter, "deleted an orphaned chapter");
     Ok(())
 }
 
@@ -1116,7 +1162,7 @@ fn chapter_directories(source: &Path, planned: &Series) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 逐章建项目，交出已经建成的那些名字。
+/// 逐章建项目，交出已经建成的那些章。
 ///
 /// 建成功一个就登记一个，所以调用方拿到的清单恰好覆盖「已经落盘、因此需要回滚」的范围。
 /// 切页与导入本身都可能失败（磁盘满、源文件被占用），而失败点在登记之后，所以登记必须紧跟
@@ -1126,7 +1172,7 @@ async fn build_chapter_projects(
     planned: &Series,
     directories: &[PathBuf],
     kind: ChapterKind,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ChapterRef>> {
     let mut created = Vec::new();
     for (chapter, directory) in planned.chapters.iter().zip(directories) {
         let files = import::collect_importable(directory)?;
@@ -1143,11 +1189,14 @@ async fn build_chapter_projects(
                 .map(|webtoon| (webtoon.imported, webtoon.ad_bands)),
         })
         .await?;
-        let mut project = projects.create(&chapter.project).await?;
-        created.push(chapter.project.clone());
+        let reference = reference_of(&planned.id, chapter);
+        let mut project = projects
+            .create(&reference, chapter_label(planned, chapter))
+            .await?;
+        created.push(reference);
         report_ad_bands(&planned.id, &ad_bands);
         import::apply(&mut project, pages).await?;
-        tracing::info!(series = %planned.id, chapter = %chapter.project, "imported a chapter");
+        tracing::info!(series = %planned.id, chapter = %chapter.chapter, "imported a chapter");
     }
     Ok(created)
 }
@@ -1155,18 +1204,44 @@ async fn build_chapter_projects(
 /// 删掉这一趟已经建出来的章项目。
 ///
 /// **删不掉的只记日志。** 主错误才是用户要解决的那一个，而一个残留目录不该盖掉它；何况回滚
-/// 本身失败时，用户仍然有一条路：漫画柜里那个「孤立项目」入口（`list_orphaned_projects`）正是
+/// 本身失败时，用户仍然有一条路：漫画柜里那个「孤立章」入口（`list_orphaned_chapters`）正是
 /// 为这些残骸准备的。
-async fn rollback_projects(projects: &ProjectLibrary, created: &[String]) {
-    for name in created.iter().rev() {
+async fn rollback_projects(projects: &ProjectLibrary, created: &[ChapterRef]) {
+    for reference in created.iter().rev() {
         let library = projects.clone();
-        let owned = name.clone();
+        let owned = reference.clone();
         match tokio::task::spawn_blocking(move || library.delete(&owned)).await {
-            Ok(Ok(())) => tracing::warn!(project = %name, "rolled back a chapter project"),
+            Ok(Ok(())) => tracing::warn!(series = %reference.series, chapter = %reference.chapter, "rolled back a chapter project"),
             Ok(Err(error)) => {
-                tracing::error!(project = %name, %error, "could not roll back a chapter project")
+                tracing::error!(series = %reference.series, chapter = %reference.chapter, %error, "could not roll back a chapter project")
             }
-            Err(error) => tracing::error!(project = %name, %error, "the rollback task was dropped"),
+            Err(error) => tracing::error!(series = %reference.series, chapter = %reference.chapter, %error, "the rollback task was dropped"),
+        }
+    }
+    remove_empty_series_directories(projects, created);
+}
+
+/// 回滚之后收掉空掉的漫画目录。
+///
+/// 章项目建在漫画目录下，所以建了一半就回滚的导入会留下一个漫画目录，里面什么都没有。它没有索引、
+/// 也不是章目录，于是既不进漫画柜，也不在残骸列表里——只有这里能收掉。
+///
+/// **只删真正空的。** 非空意味着这部漫画本来就在（追加一章失败的那种回滚），那种目录连同它的索引
+/// 必须原样留下。
+fn remove_empty_series_directories(projects: &ProjectLibrary, created: &[ChapterRef]) {
+    let parents = created
+        .iter()
+        .map(|reference| reference.series.as_str())
+        .collect::<BTreeSet<_>>();
+    for parent in parents {
+        let directory = projects.root().join(parent);
+        let empty = std::fs::read_dir(&directory).is_ok_and(|mut entries| entries.next().is_none());
+        if !empty {
+            continue;
+        }
+        match std::fs::remove_dir(&directory) {
+            Ok(()) => tracing::info!(series = %parent, "removed the empty series directory a rollback left behind"),
+            Err(error) => tracing::warn!(series = %parent, %error, "could not remove the empty series directory"),
         }
     }
 }
@@ -1180,12 +1255,6 @@ fn plan_series(library: &SeriesLibrary, source: &Path, kind: ChapterKind) -> Res
         .context("the selected folder has no usable name")?
         .to_owned();
     let id = library.reserve_id(&title)?;
-    let stem = sanitize(&title);
-    let stem = if stem.is_empty() {
-        "series".to_owned()
-    } else {
-        stem
-    };
 
     let (serial, titles) = match classify_source(source)? {
         SourceShape::OneShot => (false, vec![title.clone()]),
@@ -1207,12 +1276,15 @@ fn plan_series(library: &SeriesLibrary, source: &Path, kind: ChapterKind) -> Res
     let chapters = titles
         .into_iter()
         .enumerate()
-        .map(|(index, title)| SeriesChapter {
-            seq: index as u32 + 1,
-            project: format!("{stem} Ch{}", index + 1),
-            title,
-            kind,
-            status: ChapterStatus::Pending,
+        .map(|(index, title)| {
+            let seq = index as u32 + 1;
+            SeriesChapter {
+                seq,
+                chapter: chapter_directory(seq),
+                title,
+                kind,
+                status: ChapterStatus::Pending,
+            }
         })
         .collect();
 
@@ -1253,7 +1325,7 @@ pub struct SeriesRun {
 #[specta::specta]
 pub(crate) async fn process_series_chapters(
     id: String,
-    projects: Vec<String>,
+    chapters: Vec<ChapterRef>,
     operation: koharu_pipeline::Operation,
     handle: AppHandle<CefRuntime>,
     library: State<'_, SeriesLibrary>,
@@ -1261,20 +1333,27 @@ pub(crate) async fn process_series_chapters(
     let library = library.inner().clone();
     let mut series = library.read(&id)?;
     let project_library = handle.state::<ProjectLibrary>().inner().clone();
-    let total = projects.len();
-    for chapter in &projects {
-        if !series.chapters.iter().any(|entry| &entry.project == chapter) {
-            return Err(anyhow::anyhow!("{chapter} is not a chapter of this series").into());
-        }
-    }
+    // 勾选的章要先证明属于这部漫画，之后才有可读名与顺序可言。
+    let selected = chapters
+        .iter()
+        .map(|reference| {
+            let chapter = series
+                .chapters
+                .iter()
+                .find(|entry| entry.chapter == reference.chapter)
+                .with_context(|| format!("{reference:?} is not a chapter of {}", series.id))?;
+            Ok((reference.clone(), chapter_label(&series, chapter)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let total = selected.len();
 
     let assets = injection::Assets::collect(&library, &series, &project_library).await?;
     let baseline = koharu_pipeline::PipelineConfig::load()?.read()?.clone();
     let mut report = SeriesRun::default();
-    for (index, chapter) in projects.iter().enumerate() {
-        let opened = project_library.open(chapter).await?;
+    for (index, (reference, label)) in selected.iter().enumerate() {
+        let opened = project_library.open(reference, label.clone()).await?;
         replace_project(&handle, opened).await?;
-        let prepared = injection::Prepared::for_chapter(&assets, chapter, &baseline)?;
+        let prepared = injection::Prepared::for_chapter(&assets, reference, &baseline)?;
         report.matched = prepared.matched;
         report.unsupported = prepared.unsupported;
 
@@ -1287,13 +1366,13 @@ pub(crate) async fn process_series_chapters(
             Subject::ThisChapter(prepared),
         )
         .await?;
-        tracing::info!(series = %series.id, chapter = %chapter, index = index + 1, total, "processing a chapter");
+        tracing::info!(series = %series.id, chapter = %reference.chapter, index = index + 1, total, "processing a chapter");
         // 章名进消息：跑批会一路停在出错的那一章，没有章名的报错在界面上等于没有报错。
         if let Err(error) = started.terminal().await {
-            return Err(anyhow::anyhow!("{chapter}: {error:#}").into());
+            return Err(anyhow::anyhow!("{label}: {error:#}").into());
         }
         // 这一章刚跑出来的译文比预扫描时鲜，覆盖写给下一章，同一批里排在后面的章因此能吃到。
-        if let Some(next) = assets.successor(chapter) {
+        if let Some(next) = assets.successor(reference) {
             let snapshot = current_snapshot(&handle).await?;
             let fresh = injection::prior_chapter_context(&snapshot, assets.context_pages);
             injection::save_prior_context(&assets.directory, next, &fresh)?;
@@ -1301,7 +1380,7 @@ pub(crate) async fn process_series_chapters(
         if let Some(entry) = series
             .chapters
             .iter_mut()
-            .find(|entry| &entry.project == chapter)
+            .find(|entry| entry.chapter == reference.chapter)
         {
             entry.status = ChapterStatus::Done;
         }
@@ -1343,7 +1422,7 @@ async fn current_snapshot(handle: &AppHandle<CefRuntime>) -> Result<koharu_scene
 #[specta::specta]
 pub(crate) async fn export_series_chapters(
     id: String,
-    projects: Vec<String>,
+    chapters: Vec<ChapterRef>,
     window: WebviewWindow<CefRuntime>,
     handle: AppHandle<CefRuntime>,
     library: State<'_, SeriesLibrary>,
@@ -1351,12 +1430,16 @@ pub(crate) async fn export_series_chapters(
 ) -> std::result::Result<(), Error> {
     let library = library.inner().clone();
     let series = library.read(&id)?;
-    let chapters = series
+    let selected = series
         .chapters
         .iter()
-        .filter(|chapter| projects.contains(&chapter.project))
+        .filter(|chapter| {
+            chapters
+                .iter()
+                .any(|reference| reference.chapter == chapter.chapter)
+        })
         .collect::<Vec<_>>();
-    if chapters.is_empty() {
+    if selected.is_empty() {
         return Err(anyhow::anyhow!("none of the selected chapters belong to this series").into());
     }
     let Some(root) = rfd::AsyncFileDialog::new()
@@ -1371,8 +1454,8 @@ pub(crate) async fn export_series_chapters(
     let title = sanitize(&series.title);
     let title = if title.is_empty() { "series" } else { &title };
 
-    let first = chapters.first().map(|chapter| chapter.seq).unwrap_or(0);
-    let last = chapters.last().map(|chapter| chapter.seq).unwrap_or(0);
+    let first = selected.first().map(|chapter| chapter.seq).unwrap_or(0);
+    let last = selected.last().map(|chapter| chapter.seq).unwrap_or(0);
     let stem = if first == last {
         format!("{title} ch{first}")
     } else {
@@ -1384,8 +1467,10 @@ pub(crate) async fn export_series_chapters(
     let staged = tempfile::NamedTempFile::new_in(&root)?;
     let mut archive = zip::ZipWriter::new(staged);
 
-    for chapter in &chapters {
-        let opened = project_library.open(&chapter.project).await?;
+    for chapter in &selected {
+        let opened = project_library
+            .open(&reference_of(&id, chapter), chapter_label(&series, chapter))
+            .await?;
         replace_project(&handle, opened).await?;
         let snapshot = current_snapshot(&handle).await?;
         let pages = output::render_pages(snapshot, ExportFormat::Cbz, &desktop).await?;
@@ -1397,10 +1482,10 @@ pub(crate) async fn export_series_chapters(
             archive.start_file(format!("{folder}/{name}"), options)?;
             archive.write_all(&bytes)?;
         }
-        tracing::info!(series = %series.id, chapter = %chapter.project, "exported a chapter");
+        tracing::info!(series = %series.id, chapter = %chapter.chapter, "exported a chapter");
     }
     archive.finish()?.persist(&destination)?;
-    tracing::info!(series = %series.id, chapters = chapters.len(), "exported a volume");
+    tracing::info!(series = %series.id, chapters = selected.len(), "exported a volume");
     Ok(())
 }
 
@@ -1433,42 +1518,54 @@ mod tests {
         fs::write(path, b"x").expect("write fixture file");
     }
 
-    /// 造一个项目目录：`ProjectLibrary::list` 认的是 `.khrproj` 后缀加 `state-*.khr`。
-    fn project_fixture(root: &Path, name: &str) {
-        let directory = root.join(format!("{name}.khrproj"));
-        fs::create_dir_all(&directory).expect("create project directory");
+    /// 造一个章项目目录：`ProjectLibrary::list` 认的是漫画目录下的目录加 `state-*.khr`。
+    fn chapter_fixture(root: &Path, series: &str, chapter: &str) {
+        let directory = root.join(series).join(chapter);
+        fs::create_dir_all(&directory).expect("create chapter directory");
         touch(&directory.join("state-a.khr"));
     }
 
     #[test]
-    fn a_project_no_series_claims_is_reported_as_orphaned() {
-        // 导入在写索引之前中断，或者索引被手工删掉，都会留下这种项目：它不被任何漫画认领，
+    fn a_chapter_no_series_claims_is_reported_as_orphaned() {
+        // 导入在写索引之前中断，或者索引被手工删掉，都会留下这种章：它不被任何漫画认领，
         // 于是进不了漫画柜，也没有任何别的入口能删它。
         let root = fixture("orphans");
         let library = SeriesLibrary { root: root.clone() };
-        for name in ["Demo Title Ch1", "Demo Title Ch2", "Blue Archive Ch1"] {
-            project_fixture(&root, name);
+        for (series, chapter) in [
+            ("Blue Archive", "Chapter 1"),
+            ("Blue Archive", "Chapter 2"),
+            ("Demo Title", "Chapter 1"),
+        ] {
+            chapter_fixture(&root, series, chapter);
         }
 
-        // 一部认领了前两章的漫画：索引写成之后它们就不再是残骸。
-        let source = root.join("Demo Title");
+        // 一部认领了两章的漫画：索引写成之后它的章就不再是残骸。源目录放在库外面，免得它自己变成
+        // 一部漫画——那正是这个测试要区分的两种情况。
+        let source = fixture("orphans-source");
         fs::create_dir_all(source.join("Ch1")).expect("create chapter directory");
         fs::create_dir_all(source.join("Ch2")).expect("create chapter directory");
         touch(&source.join("Ch1").join("001.jpg"));
         touch(&source.join("Ch2").join("001.jpg"));
-        let mut series = plan_series(&library, &source, ChapterKind::Manga).expect("plan a series");
-        series.chapters.truncate(2);
-        library.write(&series).expect("write the index");
+        let planned = plan_series(&library, &source, ChapterKind::Manga).expect("plan a series");
+        let claimed_in = |chapter: &str| ChapterRef {
+            series: planned.id.clone(),
+            chapter: chapter.to_owned(),
+        };
+        library.write(&planned).expect("write the index");
 
-        let claimed = library.claimed_projects().expect("collect claimed");
-        assert!(claimed.contains("Demo Title Ch1"));
-        assert!(claimed.contains("Demo Title Ch2"));
+        let claimed = library.claimed_chapters().expect("collect claimed");
+        assert!(claimed.contains(&claimed_in("Chapter 1")));
+        assert!(claimed.contains(&claimed_in("Chapter 2")));
         assert!(
-            !claimed.contains("Blue Archive Ch1"),
-            "a project no index names is an orphan, not a chapter"
+            !claimed.contains(&ChapterRef {
+                series: "Blue Archive".to_owned(),
+                chapter: "Chapter 1".to_owned(),
+            }),
+            "a chapter no index names is an orphan, not a chapter"
         );
 
         fs::remove_dir_all(&root).expect("remove fixture directory");
+        fs::remove_dir_all(&source).expect("remove fixture directory");
     }
 
     #[test]
@@ -1561,7 +1658,7 @@ mod tests {
         SeriesChapter {
             seq,
             title: format!("Ch{seq}"),
-            project: format!("Ch{seq}"),
+            chapter: chapter_directory(seq),
             kind: ChapterKind::Manga,
             status: ChapterStatus::Ready,
         }

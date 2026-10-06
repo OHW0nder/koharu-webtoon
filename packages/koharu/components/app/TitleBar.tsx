@@ -244,7 +244,7 @@ export function TitleBar() {
         <div className='pointer-events-none absolute inset-y-0 left-1/2 flex max-w-[40vw] min-w-16 -translate-x-1/2 items-center justify-center px-3 text-[11px] text-muted-foreground select-none'>
           {project ? (
             <span className='truncate'>
-              <span className='font-medium text-foreground'>{project.name}</span>
+              <span className='font-medium text-foreground'>{project.label}</span>
               {page && (
                 <>
                   <span className='mx-2'>/</span>
