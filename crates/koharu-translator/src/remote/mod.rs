@@ -15,6 +15,7 @@ use anyhow::Context;
 use futures::{FutureExt, future::BoxFuture, future::join_all};
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
+use serde_json::json;
 
 pub use caiyun::CaiyunConfig;
 pub use claude::ClaudeConfig;
@@ -31,7 +32,7 @@ pub use openrouter::OpenRouterConfig;
 
 use crate::{
     Error, GenerationConfig, Model, ModelSelection, Provider, ProvidersConfig, Result,
-    TranslationRequest,
+    TranslationRequest, capture,
 };
 
 pub(crate) async fn translate(
@@ -132,15 +133,42 @@ pub(super) async fn send_json<T: DeserializeOwned>(
     provider: &'static str,
     request: RequestBuilder,
 ) -> Result<T> {
-    let response = request
-        .send()
-        .await
-        .with_context(|| format!("{provider} request failed"))?;
+    let exchange = capture::http(provider, &request);
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            if let Some(exchange) = exchange {
+                exchange.finish(json!({ "transport_error": error.to_string() }));
+            }
+            return Err(
+                anyhow::Error::new(error).context(format!("{provider} request failed")).into(),
+            );
+        }
+    };
     let status = response.status();
-    let text = response
-        .text()
-        .await
-        .with_context(|| format!("failed to read {provider} response"))?;
+    let text = match response.text().await {
+        Ok(text) => text,
+        Err(error) => {
+            if let Some(exchange) = exchange {
+                exchange.finish(json!({
+                    "status": status.as_u16(),
+                    "transport_error": error.to_string(),
+                }));
+            }
+            return Err(
+                anyhow::Error::new(error)
+                    .context(format!("failed to read {provider} response"))
+                    .into(),
+            );
+        }
+    };
+    if let Some(exchange) = exchange {
+        exchange.finish(json!({
+            "status": status.as_u16(),
+            "success": status.is_success(),
+            "body": capture::body_value(text.as_bytes()),
+        }));
+    }
 
     if !status.is_success() {
         let lower = text.to_ascii_lowercase();

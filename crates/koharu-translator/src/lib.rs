@@ -1,6 +1,7 @@
 //! Translation through local and hosted providers.
 
 mod backend;
+pub mod capture;
 mod error;
 mod language;
 mod local;

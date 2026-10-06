@@ -4,6 +4,7 @@ use anyhow::Context;
 use koharu_ml::llm::{
     ChatMessage, ChatTemplateOptions, Input, Llm, LoadOptions, MtmdOptions, media_marker,
 };
+use serde_json::json;
 
 mod catalog;
 
@@ -13,7 +14,7 @@ pub(crate) use catalog::{DEFAULT_MODEL, DEFAULT_QUANTIZATION};
 
 use crate::{
     Device, Error, GenerationConfig, Model, ModelSelection, Provider, Quantization, Result,
-    TranslationRequest, prompt,
+    TranslationRequest, capture, prompt,
 };
 
 #[derive(Debug)]
@@ -82,6 +83,7 @@ impl LocalTranslator {
         let llm = Arc::clone(&self.llm);
         let budget = prompt::response_budget(&request.segments);
         let generation = self.descriptor.generation.options(generation, budget);
+        let exchange = capture::local(&request, &prompt);
         let output = tokio_rayon::spawn(move || {
             let input = image.as_deref().map_or_else(
                 || Input::new(&prompt),
@@ -90,6 +92,9 @@ impl LocalTranslator {
             llm.inference_with_json_schema(&input, &generation, &schema)
         })
         .await?;
+        if let Some(exchange) = exchange {
+            exchange.finish(json!({ "text": output.text }));
+        }
         let segments = prompt::translations("local", &output.text, &request.segments)?;
         Ok(segments)
     }
