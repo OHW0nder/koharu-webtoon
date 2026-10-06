@@ -221,7 +221,10 @@ export function SeriesSettings({ id, webtoonChapters }: { id: string; webtoonCha
                 min={0}
                 max={MAX_CONTEXT_PAGES}
                 step={1}
-                value={draft.context_pages}
+                // Zero switches the feature off rather than setting a height, so it is a placeholder
+                // and not text — otherwise the leading zero has to be deleted before typing a count.
+                value={draft.context_pages === 0 ? '' : draft.context_pages}
+                placeholder='0'
                 aria-label={t('series.context.pages')}
                 className='h-7 w-20 text-[11px] tabular-nums'
                 onChange={(event) =>

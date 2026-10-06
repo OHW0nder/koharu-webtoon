@@ -27,7 +27,12 @@ export function AdBandField({
         type='number'
         min={0}
         step={1}
-        value={value}
+        // A stored zero means "no band on this end", not "a band zero pixels tall", so it is shown
+        // as a placeholder instead of as text. Were it text, the first keystroke would land behind
+        // it and the user would have to go back and delete a leading zero before typing the height
+        // they measured — the placeholder is the same hint, but it is not in the way.
+        value={value === 0 ? '' : value}
+        placeholder='0'
         disabled={disabled}
         aria-label={label}
         className='h-7 w-24 text-[11px] tabular-nums'
