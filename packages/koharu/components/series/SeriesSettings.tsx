@@ -130,13 +130,7 @@ function useDebouncedSave<T>({
 /** Series-scoped settings, on the chapter management page. The ad bands and the translation
  *  guidance are one index write and therefore one draft; the glossary is a separate file and gets
  *  its own writer below. */
-export function SeriesSettings({
-  id,
-  webtoonChapters,
-}: {
-  id: string
-  webtoonChapters: number
-}) {
+export function SeriesSettings({ id, webtoonChapters }: { id: string; webtoonChapters: number }) {
   const { t } = useTranslation()
   const settings = useSeriesSettings(id)
   const { saveSettings, savingSettings } = useSaveSeriesSettings(id)
@@ -220,9 +214,7 @@ export function SeriesSettings({
           </div>
 
           <div className='grid content-start gap-2 border-t border-border/60 pt-3 md:grid-cols-2'>
-            <h3 className='text-[11px] font-medium md:col-span-2'>
-              {t('series.context.title')}
-            </h3>
+            <h3 className='text-[11px] font-medium md:col-span-2'>{t('series.context.title')}</h3>
             <label className='flex items-center gap-2 text-[10px] text-muted-foreground'>
               <Input
                 type='number'
@@ -333,9 +325,7 @@ function GlossaryPanel({ id, running }: { id: string; running: boolean }) {
 
   const remove = (index: number) =>
     setDraft((current) =>
-      current
-        ? { ...current, entries: current.entries.filter((_, at) => at !== index) }
-        : current,
+      current ? { ...current, entries: current.entries.filter((_, at) => at !== index) } : current,
     )
 
   const exportFile = () => {

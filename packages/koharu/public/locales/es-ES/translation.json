@@ -517,11 +517,11 @@
       "kind": "Tipo de capítulo"
     },
     "importAd": {
-      "chooseChapter": "Elige un capítulo",
       "confirm": "Importar capítulo",
       "inherit": "Usar los ajustes de la serie",
       "inheritHint": "Si está desactivado, estas alturas se aplican solo a este capítulo y no se guardan en la serie.",
-      "newSeriesHint": "La serie todavía no existe, así que estas alturas se guardan con ella. Después entra el panel de ajustes."
+      "newSeriesHint": "La serie todavía no existe, así que estas alturas se guardan con ella. Después entra el panel de ajustes.",
+      "chooseFolder": "Choose the chapter folder…"
     },
     "kind": {
       "manga": "Páginas",
@@ -531,7 +531,6 @@
     "export": "Export",
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
-    "noCandidates": "No new chapters in the source folder",
     "run": {
       "summary": "{{matched}} términos del glosario coincididos",
       "unsupported": "El proveedor actual no acepta instrucciones en el prompt, así que nada de esto llegó al modelo."
@@ -553,12 +552,6 @@
     },
     "process": "Process",
     "processRun": "Run",
-    "stageAll": "All",
-    "stageNone": "None",
-    "moreActions": "More actions",
-    "sourceFolder": "Source folder",
-    "sourceFolderUnset": "Not set",
-    "sourceFolderChange": "Change source folder…",
     "deleteChapter": "Delete {{name}}",
     "deleteChapterTitle": "Delete “{{name}}”?",
     "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
@@ -569,7 +562,10 @@
     "deleteSeries": "Delete this series",
     "deleteSeriesTitle": "Delete this series?",
     "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
-    "deleteSeriesConfirm": "Delete for good"
+    "deleteSeriesConfirm": "Delete for good",
+    "pipeline": {
+      "full": "Full pipeline"
+    }
   },
   "shelf": {
     "description": "Proyectos de traducción por serie y capítulo",

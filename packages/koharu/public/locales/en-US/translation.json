@@ -517,11 +517,11 @@
       "kind": "Chapter type"
     },
     "importAd": {
-      "chooseChapter": "Choose a chapter",
       "confirm": "Import chapter",
       "inherit": "Use the series settings",
       "inheritHint": "Turned off, these heights apply to this chapter only and are not written back to the series.",
-      "newSeriesHint": "The series does not exist yet, so these heights are stored with it. The settings panel takes over afterwards."
+      "newSeriesHint": "The series does not exist yet, so these heights are stored with it. The settings panel takes over afterwards.",
+      "chooseFolder": "Choose the chapter folder…"
     },
     "importChapter": "New chapter",
     "kind": {
@@ -531,7 +531,6 @@
     "loading": "Loading…",
     "export": "Export",
     "fileCount": "{{count}} files",
-    "noCandidates": "No new chapters in the source folder",
     "run": {
       "summary": "Matched {{matched}} glossary terms",
       "unsupported": "The current provider does not accept prompt instructions, so none of this reached the model."
@@ -553,12 +552,6 @@
     },
     "process": "Process",
     "processRun": "Run",
-    "stageAll": "All",
-    "stageNone": "None",
-    "moreActions": "More actions",
-    "sourceFolder": "Source folder",
-    "sourceFolderUnset": "Not set",
-    "sourceFolderChange": "Change source folder…",
     "deleteChapter": "Delete {{name}}",
     "deleteChapterTitle": "Delete “{{name}}”?",
     "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
@@ -569,7 +562,10 @@
     "deleteSeries": "Delete this series",
     "deleteSeriesTitle": "Delete this series?",
     "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
-    "deleteSeriesConfirm": "Delete for good"
+    "deleteSeriesConfirm": "Delete for good",
+    "pipeline": {
+      "full": "Full pipeline"
+    }
   },
   "shelf": {
     "description": "Translation projects by series and chapter",

@@ -517,11 +517,11 @@
       "kind": "章节类型"
     },
     "importAd": {
-      "chooseChapter": "选择章节",
       "confirm": "导入章节",
       "inherit": "沿用漫画设置",
       "inheritHint": "关闭后，这些高度只作用于本章，不会写回漫画设置。",
-      "newSeriesHint": "这部漫画还不存在，因此这些高度会随它一起保存。之后由设置面板接管。"
+      "newSeriesHint": "这部漫画还不存在，因此这些高度会随它一起保存。之后由设置面板接管。",
+      "chooseFolder": "选择章节文件夹…"
     },
     "kind": {
       "manga": "页漫",
@@ -531,7 +531,6 @@
     "export": "导出",
     "fileCount": "{{count}} 个文件",
     "importChapter": "导入新章",
-    "noCandidates": "源目录里没有新章节",
     "run": {
       "summary": "匹配 {{matched}} 条术语",
       "unsupported": "当前服务商不接受提示词指令，因此这些内容都没有传给模型。"
@@ -553,12 +552,6 @@
     },
     "process": "处理",
     "processRun": "开始处理",
-    "stageAll": "全选",
-    "stageNone": "清空",
-    "moreActions": "更多操作",
-    "sourceFolder": "源目录",
-    "sourceFolderUnset": "未设置",
-    "sourceFolderChange": "重新指定源目录…",
     "deleteChapter": "删除 {{name}}",
     "deleteChapterTitle": "删除「{{name}}」？",
     "deleteChapterDescription": "这一章的译文与导出文件会被永久删除。序号会空出来，重新导入同一话会拿回原来的位置，上文也就仍然来自它前面那一章。",
@@ -569,7 +562,10 @@
     "deleteSeries": "删除这部漫画",
     "deleteSeriesTitle": "删除这部漫画？",
     "deleteSeriesDescription": "全部章节、译文、导出文件，以及这部漫画的术语表与设置都会被永久删除。源目录里的文件不受影响，但已经译好的内容无法从它们重建。",
-    "deleteSeriesConfirm": "永久删除"
+    "deleteSeriesConfirm": "永久删除",
+    "pipeline": {
+      "full": "完整流程"
+    }
   },
   "shelf": {
     "description": "按漫画与章节管理翻译项目",

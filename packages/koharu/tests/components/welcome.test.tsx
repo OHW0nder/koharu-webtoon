@@ -1,6 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act } from 'react'
 import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { act } from 'react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -63,7 +63,6 @@ const SUMMARY: SeriesSummary = {
 
 const DETAIL: Series = {
   ...SUMMARY,
-  source_root: null,
   chapters: [],
   settings: { ad: { head: 0, tail: 0 }, guidance: '', glossary: null, context_pages: 4 },
 }

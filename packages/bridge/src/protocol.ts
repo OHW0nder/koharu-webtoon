@@ -86,28 +86,30 @@ export const commands = {
 	 */
 	importSeries: (kind: ChapterKind, ad: AdBands) => __TAURI_INVOKE<Series>("import_series", { kind, ad }),
 	/**
-	 *  Lists the chapter directories under the series' source folder that are not registered yet.
+	 *  把一个下载好的章节文件夹并入这部漫画。
 	 * 
-	 *  Discovery is separate from import on purpose: which kind a chapter is has to be chosen per
-	 *  chapter, and a wrong cut is expensive to undo.
+	 *  **章名就是文件夹名。** 用户从生肉站点手动下载，那个文件夹名是他唯一表达的意图；应用不追问
+	 *  「这是第几话」，只按名字把它放进正确的位置。序号由全体章名决定，所以中途插入一章、或者删掉
+	 *  中间一章，都不需要用户心算它该是第几话。
 	 * 
-	 *  候选里没有「这一章会是第几话」：一次只导入一个候选，而导入第一个就会填掉一个空洞，所以列表里
-	 *  剩下那些预览出来的序号在用户点下去之前就已经错了。一个常驻界面上却不准确的数字比没有更糟。
-	 */
-	scanSeriesSource: (id: string) => __TAURI_INVOKE<CandidateChapter[]>("scan_series_source", { id }),
-	/**
-	 *  Imports one chapter of an existing series from its source folder.
-	 * 
-	 *  `ad` 是「沿用设置区里的值」为假时用户填的那一组高度。传 `None` 表示沿用本漫画的设置；传值表示这一次
-	 *  用用户的值而**不写回索引**——设置只有一份，导入完这一章之后仍然由设置区说了算
+	 *  `ad` 是「沿用设置区里的值」为假时用户填的那一组高度。传 `None` 表示沿用本漫画的设置；传值表示
+	 *  这一次用用户的值而**不写回索引**——设置只有一份，导入完这一章之后仍然由设置区说了算
 	 *  （`docs/series-settings-design.md` §2.3）。
 	 */
-	importSeriesChapter: (id: string, name: string, kind: ChapterKind, ad: {
+	importSeriesChapter: (id: string, directory: string, kind: ChapterKind, ad: {
 	/**  自源图顶端起算的首条高度。0 表示这一端没有广告。 */
 	head: number,
 	/**  自源图底端起算的尾条高度。0 表示这一端没有广告。 */
 	tail: number,
-} | null) => __TAURI_INVOKE<Series>("import_series_chapter", { id, name, kind, ad }),
+} | null) => __TAURI_INVOKE<Series>("import_series_chapter", { id, directory, kind, ad }),
+	/**
+	 *  Opens a folder picker for one chapter and returns its path, or `None` when cancelled.
+	 * 
+	 *  The picker lives here rather than in the frontend because `rfd` needs the window handle, and the
+	 *  path it returns is the chapter's name as well as its source — so this is the one question the
+	 *  import flow has to ask the operating system.
+	 */
+	pickChapterFolder: () => __TAURI_INVOKE<string | null>("pick_chapter_folder"),
 	/**
 	 *  删掉一章，连同它的章项目。
 	 * 
@@ -153,15 +155,6 @@ export const commands = {
 	 * 
 	 *  **只换目录，不自动导入。** 换源之后新目录里的章名可能与已登记的 `source` 撞名，而自动导入会把正在
 	 *  正常工作的章重导一遍；让用户点「导入新章」、在候选列表里看到文件数之后再确认。
-	 * 
-	 *  已经登记的章不受影响：它们记的是相对 `source_root` 的目录名，而那些章项目与译文都已经建好了。
-	 */
-	setSeriesSource: (id: string) => __TAURI_INVOKE<Series>("set_series_source", { id }),
-	/**
-	 *  改一部漫画的标题。
-	 * 
-	 *  **目录名要一起改。** `id` 就是目录名，而它是这部漫画唯一的标识；让目录名长得像标题，是为了让用户在
-	 *  文件系统里也能读懂这个文件夹是什么。
 	 */
 	renameSeries: (id: string, title: string) => __TAURI_INVOKE<Series>("rename_series", { id, title }),
 	/**
@@ -177,11 +170,19 @@ export const commands = {
 	 */
 	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<SeriesRun>("process_series_chapters", { id, projects, operation }),
 	/**
-	 *  Exports the given chapters side by side under one chosen folder.
+	 *  Exports the chosen chapters as one archive that keeps the shelf's shape.
 	 * 
-	 *  Like processing, this is a serial loop over projects, because only one project can be open at
-	 *  a time. Each chapter lands in its own archive or sub-folder named after the chapter, so a whole
-	 *  volume exports into a single directory the user picked once.
+	 *  **A volume exports as a single `.cbz` whose layout mirrors the shelf:** the series name, then a
+	 *  folder per chapter, then that chapter's pages. Unpacking it gives back
+	 *  `Demo Title/Ch10/00101.jpg`, so the archive reads the way the project does. Exporting one chapter
+	 *  on its own is a different deliverable and stays flat — that archive *is* the chapter.
+	 * 
+	 *  **The file name carries the range.** `Demo Title ch10-ch21.cbz` says which chapters are inside
+	 *  without opening it, and the numbers are the chapters' own slots, so a range like `ch10-ch12` in
+	 *  an archive that skips 11 is visible rather than hidden.
+	 * 
+	 *  Rendering is a serial loop because the kernel holds one open project at a time, and each chapter
+	 *  is written into the archive as soon as it is rendered — the whole volume is never in memory at once.
 	 */
 	exportSeriesChapters: (id: string, projects: string[], format: ExportFormat) => __TAURI_INVOKE<null>("export_series_chapters", { id, projects, format }),
 	selectPage: (page: EntityId) => __TAURI_INVOKE<PageSelection>("select_page", { page }).then((v) => (({...v,page:({...v.page,layers:v.page.layers.map(i=>i),regions:v.page.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))})}) as typeof v)),
@@ -271,16 +272,6 @@ export type Bounds = {
 };
 
 export type CaiyunConfig = Record<string, never>;
-
-/**  A chapter directory the downloader produced that the series has not claimed yet. */
-export type CandidateChapter = {
-	name: string,
-	/**
-	 *  How many importable files the directory holds. One long image reads very differently from
-	 *  a page folder, so this is what the user decides the chapter kind on.
-	 */
-	files: number,
-};
 
 export type CanvasBytes = number[];
 
@@ -745,8 +736,6 @@ export type Series = {
 	serial: boolean,
 	/**  封面文件名。`None` 表示用户没有指定，界面渲染占位图。 */
 	cover: string | null,
-	/**  下载器的输出目录；扫描新章时用它找出还没登记的目录。 */
-	source_root: string | null,
 	chapters: SeriesChapter[],
 	settings: SeriesSettings,
 };
@@ -757,8 +746,6 @@ export type SeriesChapter = {
 	title: string,
 	/**  章项目名，对应 `<root>/<project>.khrproj`。 */
 	project: string,
-	/**  相对 `source_root` 的源目录名；`None` 表示这一章就是 `source_root` 本身，即单行本。 */
-	source: string | null,
 	/**  这一章的源形态，决定导入时是否切页。 */
 	kind: ChapterKind,
 	/**  编排状态，与章项目内部的处理状态分开。 */

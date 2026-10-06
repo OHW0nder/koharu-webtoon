@@ -193,15 +193,6 @@ export function useSaveGlossary(id: string) {
   }
 }
 
-export function useSeriesCandidates(id: string) {
-  return useQuery({
-    queryKey: [...seriesDetailKey(id), 'candidates'],
-    queryFn: () => call(commands.scanSeriesSource, id),
-  })
-}
-
-/** Deleting a chapter also deletes its project, so the cached candidate list is stale afterwards:
- * the dropped directory is unregistered and becomes importable again. */
 export function useDeleteSeriesChapter(id: string) {
   const mutation = useMutation({
     mutationKey: ['delete-series-chapter', id],
@@ -266,30 +257,13 @@ export function useDeleteSeries() {
   }
 }
 
-/** Only swaps the folder; the new chapters stay candidates until the user picks them, because the
- *  names in the new folder may collide with the ones already registered. */
-export function useSetSeriesSource(id: string) {
-  const mutation = useMutation({
-    mutationKey: ['set-series-source', id],
-    mutationFn: () => call(commands.setSeriesSource, id),
-    onSuccess: (series) => {
-      queryClient.setQueryData(seriesDetailKey(id), series)
-      void refresh([...seriesDetailKey(id), 'candidates'], seriesKey)
-    },
-  })
-  return {
-    setSource: mutation.mutateAsync,
-    settingSource: useIsMutating({ mutationKey: ['set-series-source', id] }) > 0,
-  }
-}
-
 export function useImportSeriesChapter(id: string) {
   const mutation = useMutation({
     mutationKey: ['import-series-chapter', id],
     // `ad: null` inherits the series settings; a value applies to this one import and is
     // deliberately not written back to the index. The backend owns that decision either way.
-    mutationFn: (input: { name: string; kind: ChapterKind; ad: AdBands | null }) =>
-      call(commands.importSeriesChapter, id, input.name, input.kind, input.ad),
+    mutationFn: (input: { directory: string; kind: ChapterKind; ad: AdBands | null }) =>
+      call(commands.importSeriesChapter, id, input.directory, input.kind, input.ad),
     onSuccess: () => refresh(seriesDetailKey(id), seriesKey),
   })
   return {

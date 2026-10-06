@@ -517,11 +517,11 @@
       "kind": "章の種類"
     },
     "importAd": {
-      "chooseChapter": "章を選びます",
       "confirm": "章を読み込む",
       "inherit": "作品の設定を使う",
       "inheritHint": "オフにすると、これらの高さはこの章にだけ適用され、作品には書き戻されません。",
-      "newSeriesHint": "作品はまだ存在しないため、これらの高さは作品と一緒に保存されます。その後は設定パネルが引き継ぎます。"
+      "newSeriesHint": "作品はまだ存在しないため、これらの高さは作品と一緒に保存されます。その後は設定パネルが引き継ぎます。",
+      "chooseFolder": "Choose the chapter folder…"
     },
     "kind": {
       "manga": "ページ",
@@ -531,7 +531,6 @@
     "export": "Export",
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
-    "noCandidates": "No new chapters in the source folder",
     "run": {
       "summary": "用語 {{matched}} 件が一致",
       "unsupported": "現在のプロバイダーはプロンプトの指示を受け付けないため、これらの内容はモデルに届いていません。"
@@ -553,12 +552,6 @@
     },
     "process": "Process",
     "processRun": "Run",
-    "stageAll": "All",
-    "stageNone": "None",
-    "moreActions": "More actions",
-    "sourceFolder": "Source folder",
-    "sourceFolderUnset": "Not set",
-    "sourceFolderChange": "Change source folder…",
     "deleteChapter": "Delete {{name}}",
     "deleteChapterTitle": "Delete “{{name}}”?",
     "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
@@ -569,7 +562,10 @@
     "deleteSeries": "Delete this series",
     "deleteSeriesTitle": "Delete this series?",
     "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
-    "deleteSeriesConfirm": "Delete for good"
+    "deleteSeriesConfirm": "Delete for good",
+    "pipeline": {
+      "full": "Full pipeline"
+    }
   },
   "shelf": {
     "description": "作品と章で翻訳プロジェクトを管理します",

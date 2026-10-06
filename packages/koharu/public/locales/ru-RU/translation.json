@@ -517,11 +517,11 @@
       "kind": "Тип главы"
     },
     "importAd": {
-      "chooseChapter": "Выберите главу",
       "confirm": "Импортировать главу",
       "inherit": "Использовать настройки серии",
       "inheritHint": "Если выключено, эти высоты применяются только к этой главе и не записываются обратно в серию.",
-      "newSeriesHint": "Серии ещё нет, поэтому эти высоты сохраняются вместе с ней. Дальше их подхватит панель настроек."
+      "newSeriesHint": "Серии ещё нет, поэтому эти высоты сохраняются вместе с ней. Дальше их подхватит панель настроек.",
+      "chooseFolder": "Choose the chapter folder…"
     },
     "kind": {
       "manga": "Страницы",
@@ -531,7 +531,6 @@
     "export": "Export",
     "fileCount": "{{count}} files",
     "importChapter": "New chapter",
-    "noCandidates": "No new chapters in the source folder",
     "run": {
       "summary": "Совпало терминов глоссария: {{matched}}",
       "unsupported": "Текущий провайдер не принимает инструкции в промпте, поэтому всё это не дошло до модели."
@@ -553,12 +552,6 @@
     },
     "process": "Process",
     "processRun": "Run",
-    "stageAll": "All",
-    "stageNone": "None",
-    "moreActions": "More actions",
-    "sourceFolder": "Source folder",
-    "sourceFolderUnset": "Not set",
-    "sourceFolderChange": "Change source folder…",
     "deleteChapter": "Delete {{name}}",
     "deleteChapterTitle": "Delete “{{name}}”?",
     "deleteChapterDescription": "This chapter's translation and exported files are deleted for good. The number is left free, so importing the same chapter again takes that slot back and its context still comes from the chapter before it.",
@@ -569,7 +562,10 @@
     "deleteSeries": "Delete this series",
     "deleteSeriesTitle": "Delete this series?",
     "deleteSeriesDescription": "Every chapter, its translation and its exported files, plus this series' glossary and settings, are deleted for good. The files in the source folder are left alone, but what has already been translated cannot be rebuilt from them.",
-    "deleteSeriesConfirm": "Delete for good"
+    "deleteSeriesConfirm": "Delete for good",
+    "pipeline": {
+      "full": "Full pipeline"
+    }
   },
   "shelf": {
     "description": "Проекты перевода по сериям и главам",

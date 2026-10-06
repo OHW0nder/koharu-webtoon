@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Rows3,
   ScrollText,
   Trash2,
@@ -14,7 +15,6 @@ import {
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { StagePicker, STAGES, toOperation } from '@/components/editor/StagePicker'
 import { AdBandField } from '@/components/series/AdBandField'
 import { SeriesSettings } from '@/components/series/SeriesSettings'
 import { call } from '@/lib/backend'
@@ -24,9 +24,7 @@ import {
   useExportSeriesChapters,
   useImportSeriesChapter,
   useProcessSeriesChapters,
-  useSeriesCandidates,
   useSeriesDetail,
-  useSetSeriesSource,
 } from '@/lib/queries'
 import { useKoharuStore } from '@/lib/store'
 import {
@@ -34,8 +32,8 @@ import {
   type AdBands,
   type ChapterKind,
   type ChapterStatus,
+  type Operation,
   type SeriesRun,
-  type Stage,
 } from '@koharu/bridge/protocol'
 import {
   AlertDialog,
@@ -59,30 +57,32 @@ import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/p
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
 import { Switch } from '@koharu/ui/components/switch'
 
+/** The batch menu is a plain list of single stages, the same shape it had before. A shared
+ *  picker component was tried here and earned nothing: the per-chapter control has its own one,
+ *  and the two never had to look alike. */
+const PIPELINES: { id: string; operation: Operation }[] = [
+  { id: 'full', operation: { operation: 'full' } },
+  { id: 'detection', operation: { operation: 'only', stage: 'detection' } },
+  { id: 'ocr', operation: { operation: 'only', stage: 'ocr' } },
+  { id: 'translation', operation: { operation: 'only', stage: 'translation' } },
+  { id: 'inpainting', operation: { operation: 'only', stage: 'inpainting' } },
+]
+
 export function SeriesView({ id }: { id: string }) {
   const { t } = useTranslation()
   const showShelf = useKoharuStore((state) => state.showShelf)
   const showChapter = useKoharuStore((state) => state.showChapter)
   const series = useSeriesDetail(id)
-  const candidates = useSeriesCandidates(id)
   const { importChapter, importingChapter } = useImportSeriesChapter(id)
   const { processChapters, processing } = useProcessSeriesChapters(id)
   const { exportChapters, exporting } = useExportSeriesChapters(id)
   const { deleteChapter, deletingChapter } = useDeleteSeriesChapter(id)
   const { deleteSeries, deletingSeries } = useDeleteSeries()
-  const { setSource, settingSource } = useSetSeriesSource(id)
   const [selected, setSelected] = useState<string[]>([])
   const [run, setRun] = useState<SeriesRun | null>(null)
-  const [stages, setStages] = useState<Stage[]>([...STAGES])
 
   const chapters = series.data?.chapters ?? []
-  const busy =
-    processing ||
-    exporting ||
-    importingChapter ||
-    deletingChapter ||
-    settingSource ||
-    deletingSeries
+  const busy = processing || exporting || importingChapter || deletingChapter || deletingSeries
   const chosen = useMemo(
     () => chapters.filter((chapter) => selected.includes(chapter.project)),
     [chapters, selected],
@@ -99,10 +99,9 @@ export function SeriesView({ id }: { id: string }) {
 
   // Injection is truncated silently on the backend, so the batch reports what actually reached
   // the prompt. Without that the user has no way to tell why the result keeps changing.
-  const start = () => {
-    if (targets.length === 0 || stages.length === 0) return
+  const start = (operation: Operation) => {
     setRun(null)
-    void processChapters({ projects: targets, operation: toOperation(stages) })
+    void processChapters({ projects: targets, operation })
       .then((result) => setRun(result))
       .catch(() => undefined)
   }
@@ -130,20 +129,42 @@ export function SeriesView({ id }: { id: string }) {
 
         <ImportChapterDialog
           busy={busy}
-          candidates={candidates.data ?? []}
-          scanning={candidates.isFetching}
           ad={series.data?.settings.ad ?? { head: 0, tail: 0 }}
-          onImport={(name, kind, ad) => importChapter({ name, kind, ad })}
+          onImport={(directory, kind, ad) => importChapter({ directory, kind, ad })}
         />
 
-        <ProcessMenu
-          busy={busy}
-          processing={processing}
-          disabled={targets.length === 0}
-          stages={stages}
-          onStages={setStages}
-          onRun={start}
-        />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                disabled={busy || targets.length === 0}
+                aria-busy={processing}
+                className='h-7 gap-1.5 text-[10px]'
+              />
+            }
+          >
+            {processing ? (
+              <LoaderCircle className='size-3 animate-spin' />
+            ) : (
+              <Rows3 className='size-3' />
+            )}
+            {t('series.process')}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end' className='min-w-40 border border-border/50 p-0.5'>
+            {PIPELINES.map((pipeline) => (
+              <DropdownMenuItem
+                key={pipeline.id}
+                className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px]'
+                onClick={() => start(pipeline.operation)}
+              >
+                {pipeline.id === 'full' ? t('series.pipeline.full') : t(`phase.${pipeline.id}`)}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -180,11 +201,9 @@ export function SeriesView({ id }: { id: string }) {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <SeriesMenu
+        <DeleteSeriesButton
           busy={busy}
-          sourceRoot={series.data?.source_root ?? null}
-          onSetSource={() => void setSource().catch(() => undefined)}
-          onDelete={() =>
+          onConfirm={() =>
             void deleteSeries(id)
               .then(() => showShelf())
               .catch(() => undefined)
@@ -282,35 +301,50 @@ export function SeriesView({ id }: { id: string }) {
   )
 }
 
-/** A popover rather than a dropdown, because the ad band fields need to be typed into and Base
- *  UI's menu typeahead swallows every character key. */
+/** Imports one chapter from a folder the user points at.
+ *
+ *  The flow mirrors what the user actually does: download a chapter, then hand the app that
+ *  folder. There is no library of candidates to choose from, because there is no configured source
+ *  folder — the download lands wherever the browser put it. The chapter name is the folder name, and
+ *  only two things still need asking: the kind, which decides whether a tall image is cut into pages,
+ *  and whether this once overrides the series' ad bands.
+ */
 function ImportChapterDialog({
   busy,
-  candidates,
-  scanning,
   ad,
   onImport,
 }: {
   busy: boolean
-  candidates: { name: string; files: number }[]
-  scanning: boolean
   ad: AdBands
-  onImport: (name: string, kind: ChapterKind, ad: AdBands | null) => Promise<unknown>
+  onImport: (directory: string, kind: ChapterKind, ad: AdBands | null) => Promise<unknown>
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const [choice, setChoice] = useState<{ name: string; kind: ChapterKind } | null>(null)
+  const [kind, setKind] = useState<ChapterKind>('webtoon')
   const [inherit, setInherit] = useState(true)
   const [heights, setHeights] = useState<AdBands>(ad)
+  const [working, setWorking] = useState(false)
 
   // Re-seeded on every open, so an edit in the settings panel cannot rewrite what is being typed.
   const reopen = (next: boolean) => {
     if (next) {
-      setChoice(null)
+      setKind('webtoon')
       setInherit(true)
       setHeights(ad)
     }
     setOpen(next)
+  }
+
+  const pick = async () => {
+    const picked = await commands.pickChapterFolder()
+    if (!picked) return
+    setOpen(false)
+    setWorking(true)
+    try {
+      await onImport(picked, kind, inherit ? null : heights)
+    } finally {
+      setWorking(false)
+    }
   }
 
   return (
@@ -321,55 +355,40 @@ function ImportChapterDialog({
             type='button'
             size='sm'
             variant='outline'
-            disabled={busy}
+            disabled={busy || working}
+            aria-busy={working}
             className='h-7 gap-1.5 text-[10px]'
           />
         }
       >
-        <Plus className='size-3' />
+        {working ? <LoaderCircle className='size-3 animate-spin' /> : <Plus className='size-3' />}
         {t('series.importChapter')}
       </PopoverTrigger>
       <PopoverContent align='end' className='w-80 gap-2 p-2'>
         <div className='grid gap-1'>
           <p className='px-0.5 text-[10px] font-medium text-muted-foreground'>
-            {t('series.importAd.chooseChapter')}
+            {t('series.import.kind')}
           </p>
-          {candidates.length === 0 ? (
-            <p className='px-0.5 text-[10px] text-muted-foreground'>
-              {scanning ? t('common.loading') : t('series.noCandidates')}
-            </p>
-          ) : (
-            candidates.map((candidate) => (
-              <div key={candidate.name} className='grid gap-0.5'>
-                <p className='px-0.5 text-[9px] text-muted-foreground'>
-                  {candidate.name} · {t('series.fileCount', { count: candidate.files })}
-                </p>
-                <div className='flex gap-1'>
-                  {(['webtoon', 'manga'] as const).map((kind) => {
-                    const picked = choice?.name === candidate.name && choice.kind === kind
-                    return (
-                      <Button
-                        key={kind}
-                        type='button'
-                        size='sm'
-                        variant={picked ? 'secondary' : 'ghost'}
-                        aria-pressed={picked}
-                        className='h-7 flex-1 gap-1.5 text-[10px] font-normal'
-                        onClick={() => setChoice({ name: candidate.name, kind })}
-                      >
-                        {kind === 'webtoon' ? (
-                          <Rows3 className='size-3' />
-                        ) : (
-                          <ScrollText className='size-3' />
-                        )}
-                        {t(`series.kind.${kind}`)}
-                      </Button>
-                    )
-                  })}
-                </div>
-              </div>
-            ))
-          )}
+          <div className='flex gap-1'>
+            {(['manga', 'webtoon'] as const).map((candidate) => (
+              <Button
+                key={candidate}
+                type='button'
+                size='sm'
+                variant={kind === candidate ? 'secondary' : 'ghost'}
+                aria-pressed={kind === candidate}
+                className='h-7 flex-1 gap-1.5 text-[10px] font-normal'
+                onClick={() => setKind(candidate)}
+              >
+                {candidate === 'webtoon' ? (
+                  <Rows3 className='size-3' />
+                ) : (
+                  <ScrollText className='size-3' />
+                )}
+                {t(`series.kind.${candidate}`)}
+              </Button>
+            ))}
+          </div>
         </div>
 
         <div className='grid gap-1.5 border-t border-border/60 pt-2'>
@@ -409,25 +428,22 @@ function ImportChapterDialog({
           <Button
             type='button'
             size='sm'
-            disabled={busy || !choice}
+            disabled={busy || working}
             className='h-7 gap-1.5 text-[10px]'
-            onClick={() => {
-              if (!choice) return
-              setOpen(false)
-              void onImport(choice.name, choice.kind, inherit ? null : heights).catch(
-                () => undefined,
-              )
-            }}
+            onClick={() => void pick()}
           >
-            {busy ? <LoaderCircle className='size-3 animate-spin' /> : <Plus className='size-3' />}
-            {t('series.importAd.confirm')}
+            {working ? (
+              <LoaderCircle className='size-3 animate-spin' />
+            ) : (
+              <FolderInput className='size-3' />
+            )}
+            {t('series.importAd.chooseFolder')}
           </Button>
         </div>
       </PopoverContent>
     </Popover>
   )
 }
-
 function ChapterRow({
   chapter,
   picked,
@@ -574,122 +590,64 @@ function DeleteChaptersDialog({
   )
 }
 
-/** The batch counterpart of the single-chapter stage selector. Same stages, same operation mapping,
- *  because a batch that cannot re-run one stage forces the user back to chapter-by-chapter. */
-function ProcessMenu({
-  busy,
-  processing,
-  disabled,
-  stages,
-  onStages,
-  onRun,
-}: {
-  busy: boolean
-  processing: boolean
-  disabled: boolean
-  stages: Stage[]
-  onStages: (stages: Stage[]) => void
-  onRun: () => void
-}) {
+/** The series-level operations: where the source folder points, and removing the whole series. */
+/** The one series-level action left: removing the whole series.
+ *
+ *  Its own trigger rather than an overflow menu item, because a menu item closes the menu on click and
+ *  the confirmation would race it. */
+function DeleteSeriesButton({ busy, onConfirm }: { busy: boolean; onConfirm: () => void }) {
   const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [working, setWorking] = useState(false)
+
+  const confirm = () => {
+    setWorking(true)
+    try {
+      onConfirm()
+      setOpen(false)
+    } finally {
+      setWorking(false)
+    }
+  }
 
   return (
-    <Popover>
-      <PopoverTrigger
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
         render={
           <Button
             type='button'
-            size='sm'
-            variant='outline'
-            disabled={busy || disabled || stages.length === 0}
-            aria-busy={processing}
-            className='h-7 gap-1.5 text-[10px]'
+            size='icon-sm'
+            variant='ghost'
+            disabled={busy}
+            aria-label={t('series.deleteSeries')}
+            className='size-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
           />
         }
       >
-        {processing ? (
-          <LoaderCircle className='size-3 animate-spin' />
-        ) : (
-          <Rows3 className='size-3' />
-        )}
-        {t('series.process')}
-      </PopoverTrigger>
-      <PopoverContent align='end' className='w-56 gap-2 p-2'>
-        <StagePicker stages={stages} onChange={onStages} disabled={processing} />
-        <Button
-          type='button'
-          size='sm'
-          disabled={busy || disabled || stages.length === 0}
-          className='h-7 gap-1.5 text-[10px]'
-          onClick={onRun}
-        >
-          {processing ? (
-            <LoaderCircle className='size-3 animate-spin' />
-          ) : (
-            <Rows3 className='size-3' />
-          )}
-          {t('series.processRun')}
-        </Button>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/** The series-level operations: where the source folder points, and removing the whole series. */
-function SeriesMenu({
-  busy,
-  sourceRoot,
-  onSetSource,
-  onDelete,
-}: {
-  busy: boolean
-  sourceRoot: string | null
-  onSetSource: () => void
-  onDelete: () => void
-}) {
-  const { t } = useTranslation()
-
-  return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              type='button'
-              size='icon-sm'
-              variant='ghost'
-              disabled={busy}
-              aria-label={t('series.moreActions')}
-              className='size-7 shrink-0 text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground'
-            />
-          }
-        >
-          <MoreHorizontal className='size-4' />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align='end' className='min-w-64 border border-border/50 p-0.5'>
-          <div className='px-1.5 py-1'>
-            <p className='text-[9px] font-medium text-muted-foreground'>
-              {t('series.sourceFolder')}
-            </p>
-            <p className='mt-0.5 truncate text-[10px]' title={sourceRoot ?? undefined}>
-              {sourceRoot ?? t('series.sourceFolderUnset')}
-            </p>
-          </div>
-          <DropdownMenuItem
-            className='min-h-7 gap-1.5 px-1.5 py-0.5 text-[11px]'
-            onClick={onSetSource}
+        <Trash2 className='size-4' />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('series.deleteSeriesTitle')}</AlertDialogTitle>
+          <AlertDialogDescription>{t('series.deleteSeriesDescription')}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={working}>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={working}
+            onClick={(event) => {
+              event.preventDefault()
+              confirm()
+            }}
           >
-            <FolderInput className='size-3' />
-            {t('series.sourceFolderChange')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <DeleteSeriesDialog busy={busy} onConfirm={onDelete} />
-    </>
+            {working && <LoaderCircle className='size-3 animate-spin' />}
+            {t('series.deleteSeriesConfirm')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
-
 /** Removing a series takes its chapters and their translations with it, and none of that can be
  *  rebuilt from the source folder. It therefore gets its own trigger rather than living inside the
  *  overflow menu: a menu item closes the menu on click, so the confirmation would race it. */

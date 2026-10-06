@@ -517,11 +517,11 @@
       "kind": "章節類型"
     },
     "importAd": {
-      "chooseChapter": "選擇章節",
       "confirm": "匯入章節",
       "inherit": "沿用漫畫設定",
       "inheritHint": "關閉後，這些高度只作用於本章，不會寫回漫畫設定。",
-      "newSeriesHint": "這部漫畫還不存在，因此這些高度會隨著它一起儲存。之後由設定面板接手。"
+      "newSeriesHint": "這部漫畫還不存在，因此這些高度會隨著它一起儲存。之後由設定面板接手。",
+      "chooseFolder": "選擇章節資料夾…"
     },
     "kind": {
       "manga": "頁漫",
@@ -531,7 +531,6 @@
     "export": "匯出",
     "fileCount": "{{count}} 個檔案",
     "importChapter": "匯入新章",
-    "noCandidates": "來源目錄裡沒有新章節",
     "run": {
       "summary": "符合 {{matched}} 筆術語",
       "unsupported": "目前的服務提供者不接受提示指令，因此這些內容都沒有傳給模型。"
@@ -553,12 +552,6 @@
     },
     "process": "處理",
     "processRun": "開始處理",
-    "stageAll": "全選",
-    "stageNone": "清空",
-    "moreActions": "更多操作",
-    "sourceFolder": "來源目錄",
-    "sourceFolderUnset": "未設定",
-    "sourceFolderChange": "重新指定來源目錄…",
     "deleteChapter": "刪除 {{name}}",
     "deleteChapterTitle": "刪除「{{name}}」？",
     "deleteChapterDescription": "這一章的譯文與匯出檔案會被永久刪除。序號會空出來，重新匯入同一話會拿回原來的位置，上文也就仍然來自它前面那一章。",
@@ -569,7 +562,10 @@
     "deleteSeries": "刪除這部漫畫",
     "deleteSeriesTitle": "刪除這部漫畫？",
     "deleteSeriesDescription": "全部章節、譯文、匯出檔案，以及這部漫畫的術語表與設定都會被永久刪除。來源目錄裡的檔案不受影響，但已經譯好的內容無法從它們重建。",
-    "deleteSeriesConfirm": "永久刪除"
+    "deleteSeriesConfirm": "永久刪除",
+    "pipeline": {
+      "full": "完整流程"
+    }
   },
   "shelf": {
     "description": "按漫畫與章節管理翻譯專案",

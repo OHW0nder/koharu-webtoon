@@ -89,14 +89,26 @@ async fn pick_destination(
 
 /// Renders every page of one project and writes the result.
 ///
-/// The series batch calls this too, so a chapter exported on its own and the same chapter exported
-/// as part of a batch produce identical bytes; the only difference is where `destination` points.
+/// The pages keep the names they were imported under — a folder of `00101.jpg`, `00102.jpg` comes
+/// back out under exactly those names, because a reader who compares the export against the source
+/// folder should find the same files, and because a page number this code invents is one more thing
+/// that can disagree with the original.
 pub(crate) async fn export_snapshot(
     snapshot: Snapshot,
     format: ExportFormat,
     destination: std::path::PathBuf,
     desktop: &Desktop,
 ) -> Result<()> {
+    let pages = render_pages(snapshot, format, desktop).await?;
+    write_output(pages, format, destination, &[]).await
+}
+
+/// Renders one project into encoded pages, in project order.
+pub(crate) async fn render_pages(
+    snapshot: Snapshot,
+    format: ExportFormat,
+    desktop: &Desktop,
+) -> Result<Vec<(String, Vec<u8>)>> {
     let pages = snapshot.pages().map(|page| page.id()).collect::<Vec<_>>();
     if pages.is_empty() {
         return Err(anyhow::anyhow!("there are no pages to export"));
@@ -143,6 +155,49 @@ pub(crate) async fn export_snapshot(
             ("psd", images)
         }
     };
+    let mut names = Vec::with_capacity(pages.len());
+    for page_id in pages {
+        names.push(snapshot.page(page_id)?.page()?.label.clone());
+    }
+    Ok(extension_names(names, extension)
+        .into_iter()
+        .zip(images)
+        .collect())
+}
+
+/// A page label as an archive entry name: no directory part, and nothing an archive would reject.
+fn extension_names(names: Vec<String>, extension: &str) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|name| {
+            let stem = name
+                .trim()
+                .rsplit_once('.')
+                .map_or(name.trim(), |(stem, _)| stem);
+            let stem = stem.replace(['<', '>', ':', '"', '/', '\\', '|', '?', '*'], "_");
+            let stem = stem.trim_end_matches(['.', ' ']);
+            format!("{}.{extension}", if stem.is_empty() { "page" } else { stem })
+        })
+        .collect()
+}
+
+/// Writes rendered pages to a folder or a single archive.
+///
+/// `folders` places the pages inside a directory in the archive, which is what separates a volume
+/// export from a single-chapter one: the chapter's own export *is* the chapter, while a volume keeps
+/// each chapter in a folder of its own so unpacking it reproduces the shelf.
+async fn write_output(
+    pages: Vec<(String, Vec<u8>)>,
+    format: ExportFormat,
+    destination: std::path::PathBuf,
+    folders: &[String],
+) -> Result<()> {
+    let prefix = folders.iter().fold(String::new(), |mut acc, folder| {
+        acc.push_str(folder);
+        acc.push('/');
+        acc
+    });
+    let folders = folders.to_vec();
     tokio_rayon::spawn(move || -> Result<()> {
         let mut archive = if matches!(format, ExportFormat::Cbz) {
             let directory = destination.parent().context("archive path has no parent")?;
@@ -150,39 +205,22 @@ pub(crate) async fn export_snapshot(
                 directory,
             )?))
         } else {
+            for folder in &folders {
+                std::fs::create_dir_all(destination.join(folder))?;
+            }
             None
         };
-        let width = pages.len().to_string().len().max(4);
-        // Async preparation and indexed encoding both preserve project order.
-        for (index, (page_id, bytes)) in pages.into_iter().zip(images).enumerate() {
-            let page = snapshot.page(page_id)?.page()?;
-            let name = page
-                .label
-                .trim()
-                .trim_end_matches(|character: char| character == '.' || character.is_whitespace());
-            let name = name
-                .rsplit_once('.')
-                .map_or(name, |(stem, _)| stem)
-                .replace(['<', '>', ':', '"', '/', '\\', '|', '?', '*'], "_");
-            let name = format!(
-                "{:0width$}_{}.{extension}",
-                index + 1,
-                if name.is_empty() { "page" } else { &name }
-            );
+        for (name, bytes) in pages {
+            let entry = format!("{prefix}{name}");
             if let Some(archive) = &mut archive {
                 // PNG data is already compressed.
                 let options = zip::write::SimpleFileOptions::default()
                     .compression_method(zip::CompressionMethod::Stored);
-                archive.start_file(name, options)?;
+                archive.start_file(entry, options)?;
                 archive.write_all(&bytes)?;
             } else {
-                std::fs::write(destination.join(name), bytes)?;
+                std::fs::write(destination.join(entry), bytes)?;
             }
-            tracing::info!(
-                target: "koharu_metrics",
-                metric = "page_exported",
-                format = ?format,
-            );
         }
         if let Some(archive) = archive {
             archive.finish()?.persist(destination)?;
