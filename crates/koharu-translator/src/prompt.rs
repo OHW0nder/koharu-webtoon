@@ -236,12 +236,13 @@ fn translation_system_prompt(request: &TranslationRequest) -> String {
             - Preserve meaning, character voice, emotional tone, relationship nuance, emphasis, and sound effects.
             - Localize idioms and sound effects naturally while keeping wording concise enough for speech bubbles.
             - Use surrounding segments only for disambiguation and continuity; never merge or split segments.
+            - The input text comes from OCR and may contain misread characters, dropped characters, or garbled text. Read each segment as the phrase it is most plausibly meant to be, using the neighbouring segments; where a plausible reading exists, prefer it over a literal rendering of obvious OCR noise.
             - Write every translated `text` value only in {target}; do not include source text, notes, explanations, or alternatives.
             - Never preserve or repeat original-language text; translate names, terms, and sound effects using natural {target} conventions.
 
             Output requirements:
             - Each input segment has a numeric `id`.
-            - Return only a JSON object whose `translations` array contains one object with `id` and translated `text` for every input segment.
+            - Return only a JSON object whose `translations` array contains exactly one object per input segment, each carrying its own `id` and the translated `text`.
             - Copy every input ID exactly once; order does not matter.
             - Never merge, split, omit, duplicate, or add segments.
         "},
@@ -265,7 +266,10 @@ fn translation_system_prompt(request: &TranslationRequest) -> String {
         prompt.push_str(indoc! {"
             Image requirements:
             Use the attached original page image as visual context for speaker identity, tone, layout, and ambiguous OCR.
-            Translate only the supplied segments; do not add text seen in the image that is absent from the input segments.
+
+            The input text comes from OCR and may disagree with the page. When a supplied segment clearly differs from the writing inside its own bubble, read it from the page and translate what the page says.
+
+            Text that belongs to a different bubble or element is not in scope: leave it out and do not add segments for it. Translate only the supplied segments.
         "}.trim_end());
     }
 
@@ -592,5 +596,38 @@ mod tests {
         let prompt = translation_system_prompt(&request);
         assert!(prompt.contains("attached original page image"));
         assert!(prompt.contains("Translate only the supplied segments"));
+    }
+
+    #[test]
+    fn the_image_may_correct_a_segment_without_adding_one() {
+        // 这两件事必须同时说清：条内按图纠错是允许的，条外增补仍然禁止。少了前者模型不敢纠正
+        // 错字，少了后者它会借纠错之名把整页文字都翻出来。
+        let request = TranslationRequest::new(["text"], Language::English)
+            .with_image(std::sync::Arc::new(image::DynamicImage::new_rgb8(1, 1)));
+        let prompt = translation_system_prompt(&request);
+
+        assert!(prompt.contains("may disagree with the page"));
+        assert!(prompt.contains("inside its own bubble"));
+        assert!(prompt.contains("translate what the page says"));
+        assert!(prompt.contains("do not add segments for it"));
+    }
+
+    #[test]
+    fn ocr_noise_may_be_read_through_without_waiting_for_an_image() {
+        // 纠错引导不能只挂在图片那一段：纯文本服务商同样拿到有瑕疵的 OCR 结果，而它们看不到图。
+        let request = TranslationRequest::new(["text"], Language::English);
+        let prompt = translation_system_prompt(&request);
+
+        assert!(prompt.contains("comes from OCR and may contain misread characters"));
+        assert!(prompt.contains("using the neighbouring segments"));
+        assert!(!prompt.contains("Image requirements"), "no image, no image section");
+    }
+
+    #[test]
+    fn the_output_contract_counts_every_segment_exactly_once() {
+        // json_object 那一档拿不到 minItems/maxItems，段数全靠这两句，所以措辞要能扛住漏返回。
+        let prompt = translation_system_prompt(&TranslationRequest::new(["a"], Language::English));
+        assert!(prompt.contains("contains exactly one object per input segment"));
+        assert!(prompt.contains("Copy every input ID exactly once"));
     }
 }
