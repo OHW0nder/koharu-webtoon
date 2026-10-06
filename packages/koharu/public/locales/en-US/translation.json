@@ -477,9 +477,9 @@
     "backToShelf": "Back to the shelf",
     "chapterCount": "{{count}} chapters",
     "context": {
-      "hint": "Translating page N also sends the N previous pages as already-translated examples, so wording stays consistent. A page still untranslated is simply skipped. More pages cost more tokens; at most {{max}}.",
-      "pages": "In-chapter context pages",
-      "title": "In-chapter context"
+      "hint": "Translating a page also sends the pages before it as already-translated examples, so wording stays consistent. The window spans chapters: the first page of a chapter reaches back into the previous one, and each page after that gives up one page of the previous chapter for one of its own. A page still untranslated keeps its slot but contributes nothing. More pages cost more tokens; at most {{max}}.",
+      "pages": "Context pages",
+      "title": "Context window"
     },
     "empty": "This series has no chapters yet",
     "glossary": {
@@ -541,8 +541,7 @@
       "translateOnly": "Translate only"
     },
     "run": {
-      "dropped": "{{count}} dropped by the byte budget",
-      "summary": "Matched {{matched}} glossary terms · injected {{injected}} context entries",
+      "summary": "Matched {{matched}} glossary terms",
       "unsupported": "The current provider does not accept prompt instructions, so none of this reached the model."
     },
     "selectAll": "Select all",

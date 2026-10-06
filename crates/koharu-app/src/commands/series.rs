@@ -180,13 +180,15 @@ pub struct SeriesSettings {
     /// 章内上文回溯的页数：翻译第 N 页时带上第 N−1 到第 N−N 页的成对双语对照。0 表示不注入。
     ///
     /// 这不是章的资料而是**运行参数**——它决定翻译阶段每次请求带多少先例，所以归到批量执行时
-    /// 写进管线配置，而不像指导与术语表那样渲染进附加说明。合适的距离取决于模型与作品，只能实测
-    /// 确定，所以它是用户可调的；硬上限由 `koharu_pipeline::MAX_CONTEXT_PAGES` 兜住。
+    /// 写进管线配置，而不像指导与术语表那样渲染进附加说明。上文窗口跨章连续，所以这一个值同时是
+    /// 章内与章外的回溯距离：翻到本章第 1 页时窗口整段来自上一章末尾，翻到第 2 页时让出一页换成本章
+    /// 第 1 页，以此类推。合适的距离取决于模型与作品，只能实测确定，所以它是用户可调的；硬上限由
+    /// `koharu_pipeline::MAX_CONTEXT_PAGES` 兜住。
     #[serde(default = "default_context_pages")]
     pub context_pages: u32,
 }
 
-/// 章内上文的默认回溯页数，与 `koharu-pipeline` 的默认值一致。
+/// 上文窗口的默认页数，与 `koharu-pipeline` 的默认值一致。
 fn default_context_pages() -> u32 {
     4
 }
@@ -963,21 +965,16 @@ fn resolve_source(series: &Series, chapter: &SeriesChapter) -> Option<PathBuf> {
     })
 }
 
-/// 一次批量实际注入进去的东西，用来让界面说清效果为什么不稳。
+/// 一次批量实际注入进去的东西。
 ///
-/// 命中数与注入数必须能分开看：命中数是术语表里出现在原文中的条数，注入数是最终写进提示词的上文条数。
-/// 两者不一致就说明字节预算把上文截断了，而截断本身是静默的（`docs/reference/koharu-glossary-design.md`
-/// §4.2）。
+/// 只需要报命中数：上文不再走注入通道，它的总量由用户自己设的 `context_pages` 页数上限约束，不存在
+/// 静默截断，因此没有「被丢掉多少」需要解释。
 #[derive(Clone, Copy, Debug, Default, Serialize, Type)]
 pub struct SeriesRun {
     /// 跑完的章数。
     pub chapters: u32,
     /// 术语表里出现在原文中的条数。整批共用同一份原文，所以这个值在批内不变。
     pub matched: u32,
-    /// 写进提示词的上文条数，各章累加。
-    pub injected: u32,
-    /// 因为字节预算被丢掉的条文数，各章累加。
-    pub dropped: u32,
     /// 当前服务商不接受提示词，这一批的注入内容全部无效。
     pub unsupported: bool,
 }
@@ -988,9 +985,9 @@ pub struct SeriesRun {
 /// open a chapter, run the whole project scope, wait for the job, move on. Every chapter commits on
 /// its own, so an interrupted batch resumes by simply running the chapters that are still pending.
 ///
-/// **注入内容在每章开始前换一次。** 翻译附加说明是这一次批量唯一能换掉的通道（`injection` 模块的模块
-/// 注释），换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文各不相同，而本地模型只读
-/// 一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户配置，漫画的资料不会漏进设置页。
+/// **注入内容在每章开始前换一次。** 换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文
+/// 窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户
+/// 配置，漫画的资料不会漏进设置页。
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn process_series_chapters(
@@ -1016,18 +1013,15 @@ pub(crate) async fn process_series_chapters(
     for (index, chapter) in projects.iter().enumerate() {
         let opened = project_library.open(chapter).await?;
         replace_project(&handle, opened).await?;
-        let cross_chapter =
-            injection::load_cross_chapter(&assets.directory, assets.seq(chapter)?);
-        let mut built = assets.injection(cross_chapter);
+        let prior = injection::load_prior_context(&assets.directory, assets.seq(chapter)?);
+        let mut built = assets.injection();
         built.global = baseline.translation.instructions.clone();
         let rendered = injection::render(&built, baseline.translation.model.provider);
-        // 章内上文的回溯距离是运行参数而不是资料：它决定翻译阶段每次请求带多少先例，所以与附加说明
-        // 一起写进管线配置，由 `koharu-pipeline` 在每页上就地取前 N 页。
-        apply_injection(&handle, rendered.text.clone(), assets.context_pages)?;
+        // 窗口的页数与章外那一段都是运行参数而不是资料：它们决定翻译阶段每次请求带多少先例，所以
+        // 与附加说明一起写进管线配置，由 `koharu-pipeline` 在每页上就地取一个跨章连续的窗口。
+        apply_injection(&handle, rendered.text, assets.context_pages, prior)?;
         report.matched = rendered.matched as u32;
         report.unsupported = rendered.unsupported;
-        report.injected += rendered.injected as u32;
-        report.dropped += rendered.dropped as u32;
 
         let job = process(
             handle.clone(),
@@ -1043,8 +1037,8 @@ pub(crate) async fn process_series_chapters(
         // 这一章刚跑出来的译文比预扫描时鲜，覆盖写给下一章，同一批里排在后面的章因此能吃到。
         if let Some(next) = assets.successor(chapter) {
             let snapshot = current_snapshot(&handle).await?;
-            let fresh = injection::cross_chapter_context(&snapshot, assets.context_pages);
-            injection::save_cross_chapter(&assets.directory, next, &fresh)?;
+            let fresh = injection::prior_chapter_context(&snapshot, assets.context_pages);
+            injection::save_prior_context(&assets.directory, next, &fresh)?;
         }
         if let Some(entry) = series
             .chapters
@@ -1063,8 +1057,6 @@ pub(crate) async fn process_series_chapters(
         series = %series.id,
         chapters = report.chapters,
         matched = report.matched,
-        injected = report.injected,
-        dropped = report.dropped,
         outcome = if report.unsupported { "provider_ignores_instructions" } else { "injected" },
     );
     Ok(report)
@@ -1073,26 +1065,26 @@ pub(crate) async fn process_series_chapters(
 /// 一部漫画的翻译资料，按批量开始前的状态一次性备好。
 ///
 /// **预扫描是必需的，不是优化。** 术语命中要看整部漫画的原文，而内核同一时刻只有一个活动项目，所以
-/// 「拿到全部原文」只能靠批量开始前逐章打开一次；跨章上文的基线也出自同一趟。两趟合一，每章两次打开，
-/// 与是否启用跨章上文无关。
+/// 「拿到全部原文」只能靠批量开始前逐章打开一次；上一章的基线也出自同一趟。两趟合一，每章两次打开，
+/// 与是否启用上文无关。
 struct SeriesAssets {
-    /// 漫画目录，跨章上文旁挂文件与它同级。
+    /// 漫画目录，上文旁挂文件与它同级。
     directory: PathBuf,
     /// 用户手写的指导。
     guidance: String,
     glossary: Glossary,
     /// 整部漫画的原文，供术语命中判定。
     haystack: String,
-    /// 章内与跨章上文的回溯页数，同一个值：两者取的都是「最近若干页」，用户只调一个旋钮。
+    /// 上文窗口的页数：章内与章外取的都是「最近若干页」，用户只调一个旋钮。
     context_pages: u32,
-    /// 章序号 → 章项目名，用来判「下一章」和读自己的跨章上文。
+    /// 章序号 → 章项目名，用来判「下一章」和读自己的上文。
     order: Vec<(u32, String)>,
 }
 
 impl SeriesAssets {
-    /// 逐章打开一次，收集全部原文，并为每一章的下一章写下跨章上文的基线。
+    /// 逐章打开一次，收集全部原文，并为每一章的下一章写下上文窗口的基线。
     ///
-    /// 基线取自「磁盘上已有的译文」，所以中断之后重跑一批仍然拿得到跨章上文。
+    /// 基线取自「磁盘上已有的译文」，所以中断之后重跑一批仍然拿得到上一章的写法。
     async fn collect(
         library: &SeriesLibrary,
         series: &Series,
@@ -1123,8 +1115,8 @@ impl SeriesAssets {
             let Some(next) = assets.successor(&chapter.project) else {
                 continue;
             };
-            let context = injection::cross_chapter_context(&snapshot, assets.context_pages);
-            injection::save_cross_chapter(&assets.directory, next, &context)?;
+            let context = injection::prior_chapter_context(&snapshot, assets.context_pages);
+            injection::save_prior_context(&assets.directory, next, &context)?;
         }
         Ok(assets)
     }
@@ -1147,22 +1139,21 @@ impl SeriesAssets {
             .context("the chapter is not registered in this series")
     }
 
-    /// 这一章的注入内容：人工资料 + 跨章上文。全局指导由调用方补上，因为它是用户的而不是这部漫画的。
+    /// 这一章的注入内容：只有人工资料。全局指导由调用方补上，因为它是用户的而不是这部漫画的。
     ///
-    /// 章内上文不在这里：它逐页变化，由翻译阶段就地取前若干页，所以走配置而不是走渲染。
-    fn injection(&self, cross_chapter: Vec<injection::ContextEntry>) -> Injection {
+    /// 上文不在这里：它逐页变化，由翻译阶段就地取一个跨章连续的窗口，所以走配置而不是走渲染。
+    fn injection(&self) -> Injection {
         Injection {
             guidance: self.guidance.clone(),
             glossary: self.glossary.clone(),
             haystack: self.haystack.clone(),
-            cross_chapter,
             global: None,
             order: None,
         }
     }
 }
 
-/// 把这一章的注入内容与章内上文的回溯距离写进管线跑的那份配置。
+/// 把这一章的注入内容与上文窗口写进管线跑的那份配置。
 ///
 /// 写的是**配置**而不是换一条管线：换管线会连翻译器一起重建，本地模型的权重要重读一遍盘，而重建阶段
 /// 运行器与翻译器共用同一个已加载模型。空串表示这一章没有可注入的内容，于是这一章就用回用户自己的
@@ -1171,11 +1162,13 @@ fn apply_injection(
     handle: &AppHandle<CefRuntime>,
     text: String,
     context_pages: u32,
+    prior: Vec<Vec<koharu_translator::TranslationContext>>,
 ) -> Result<()> {
     let live = handle.state::<koharu_config::Config<koharu_pipeline::PipelineConfig>>();
     let mut current = live.write()?;
     current.translation.instructions = (!text.is_empty()).then_some(text);
     current.translation.context_pages = context_pages;
+    current.translation.prior_chapter_context = prior;
     Ok(())
 }
 

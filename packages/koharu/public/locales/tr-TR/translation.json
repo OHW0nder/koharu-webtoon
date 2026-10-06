@@ -477,9 +477,9 @@
     "backToShelf": "Raf'a dön",
     "chapterCount": "{{count}} bölüm",
     "context": {
-      "hint": "N. sayfayı çevirirken önceki N sayfanın çevrilmiş örnekleri de gönderilir, böylece ifade tutarlı kalır. Henüz çevrilmemiş bir sayfa atlanır. Daha fazla sayfa daha fazla jeton harcar; en fazla {{max}}.",
-      "pages": "Bölüm içi bağlam sayfası",
-      "title": "Bölüm içi bağlam"
+      "hint": "Bir sayfayı çevirirken önceki sayfaların çevrilmiş örnekleri de gönderilir, böylece ifade tutarlı kalır. Pencere bölüm sınırının üzerinden devam eder: bir bölümün ilk sayfası bir önceki bölümün sonuna kadar geri bakar, sonraki her sayfada önceki bölümden bir sayfa çıkar ve yerine bu bölümün bir sayfası gelir. Henüz çevrilmemiş bir sayfa yerini korur ama hiçbir katkı yapmaz. Daha fazla sayfa daha fazla jeton harcar; en fazla {{max}}.",
+      "pages": "Bağlam penceresi sayfası",
+      "title": "Bağlam penceresi"
     },
     "empty": "Bu seride henüz bölüm yok",
     "glossary": {
@@ -541,8 +541,7 @@
       "translateOnly": "Translate only"
     },
     "run": {
-      "dropped": "Bayt bütçesi nedeniyle {{count}} kayıt atıldı",
-      "summary": "{{matched}} sözlük terimi eşleşti · {{injected}} bağlam kaydı eklendi",
+      "summary": "{{matched}} sözlük terimi eşleşti",
       "unsupported": "Geçerli sağlayıcı istem talimatlarını kabul etmiyor, bu yüzden bunların hiçbiri modele ulaşmadı."
     },
     "selectAll": "Select all",

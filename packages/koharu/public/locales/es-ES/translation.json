@@ -477,9 +477,9 @@
     "backToShelf": "Volver a la estantería",
     "chapterCount": "{{count}} capítulos",
     "context": {
-      "hint": "Al traducir la página N también se envían las N páginas anteriores como ejemplos ya traducidos, para que el wording no cambie. Una página sin traducción se omite. Más páginas cuestan más tokens; el máximo es {{max}}.",
-      "pages": "Páginas de contexto del capítulo",
-      "title": "Contexto del capítulo"
+      "hint": "Al traducir una página también se envían las páginas anteriores como ejemplos ya traducidos, para que el wording no cambie. La ventana cruza el cambio de capítulo: la primera página de un capítulo retrocede hasta el final del anterior, y cada página siguiente cambia una página del capítulo anterior por una del actual. Una página sin traducción conserva su hueco pero no aporta nada. Más páginas cuestan más tokens; el máximo es {{max}}.",
+      "pages": "Páginas de contexto",
+      "title": "Ventana de contexto"
     },
     "empty": "Esta serie todavía no tiene capítulos",
     "glossary": {
@@ -541,8 +541,7 @@
       "translateOnly": "Translate only"
     },
     "run": {
-      "dropped": "{{count}} descartados por el límite de bytes",
-      "summary": "{{matched}} términos del glosario coincididos · {{injected}} entradas de contexto inyectadas",
+      "summary": "{{matched}} términos del glosario coincididos",
       "unsupported": "El proveedor actual no acepta instrucciones en el prompt, así que nada de esto llegó al modelo."
     },
     "selectAll": "Select all",

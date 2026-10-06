@@ -1,4 +1,4 @@
-//! 漫画级翻译资料的注入通道：把人工资料与上文渲染成一段散文，追加到翻译请求的附加说明末尾。
+//! 漫画级翻译资料的注入通道：把人工资料渲染成一段散文，追加到翻译请求的附加说明末尾。
 //!
 //! **为什么只能走附加说明。** 翻译请求上有三个能承载内容的字段。语境条目在语义上其实最适合术语表——
 //! 成对结构、离散条目，还自带「不要回译这些条目」的现成约束——但它的赋值点在翻译阶段内部，改它就是改
@@ -6,15 +6,15 @@
 //! （`docs/reference/koharu-glossary-design.md` §3）。代价是内容必须渲染成散文，所以这一层负责把结构化
 //! 资料翻译成模型读得懂的话。
 //!
-//! **段与顺序。** 漫画级翻译指导 → 术语表命中项 → 上文（章内 + 跨章）→ 用户的全局指导。逻辑是「一般到
-//! 特殊，参考垫底」：先声明这本书的规矩，再给不可违反的译名，最后给可模仿的先例；全局指导排在后面，
-//! 跨作品的口味不该压过作品自己的约定。这个顺序尚未实测，所以它由 [`Injection::order`] 决定而不是写死在
-//! 渲染函数里。两段上文共用一个抬头与一份条目列表，因此它们在渲染上是一段，预算与丢弃顺序上仍是两段。
+//! **段与顺序。** 漫画级翻译指导 → 术语表命中项 → 用户的全局指导。逻辑是「一般到特殊，参考垫底」：先
+//! 声明这本书的规矩，再给不可违反的译名；全局指导排在后面，跨作品的口味不该压过作品自己的约定。这个
+//! 顺序尚未实测，所以它由 [`Injection::order`] 决定而不是写死在渲染函数里。
 //!
-//! **预算。** 各段共用一个字节预算，按「人工资料 → 章内上文 → 跨章上文」分配，丢弃顺序与优先级相反：
-//! 章内上文从**最近**的一条开始丢，跨章上文从**最早**的一条开始丢。人工资料永远不丢——它是冷启动时唯一
-//! 能生效的东西（`koharu-glossary-design.md` §2.1）。截断本身静默，但 [`Rendered`] 会报出丢了多少，界面
-//! 要显示它，否则用户无法判断效果为什么不稳定。
+//! **上文不走这一层。** 上文曾经以散文段落的形式挂在附加说明末尾，代价有两个：整章每一页都重复看着
+//! 同一批先例，而那一段与翻译阶段自己取的章内部分各按 `context_pages` 算一遍，总量最多到两倍页。现在
+//! 上文整个搬进语境条目通道，由翻译阶段就地取一个**跨章连续**的窗口，逐页不同、总量恒为
+//! `context_pages` 页（见 `koharu_pipeline::preceding_context`）。这一层因此不再有字节预算：人工资料是
+//! 用户手写的、不会被丢，上文的总量由页数上限约束。
 //!
 //! **服务商能力判断落在这里。** 作用域管线在构造之前已经读到了当前配置，其中的模型选择包含服务商，
 //! 所以渲染期即可判断，零流水线改动（`koharu-glossary-design.md` §5）。不支持提示词的服务商会静默丢弃
@@ -24,46 +24,12 @@ use std::{fs, path::Path};
 
 use anyhow::{Context as _, Result};
 use koharu_scene::Snapshot;
+use koharu_translator::TranslationContext;
 
 use crate::{commands::series::Glossary, glossary};
 
-/// 上文段落的抬头。
-///
-/// 「不要翻译、不要输出」这句约束必须自带：系统提示词里对应的那句是随语境条目字段一起出现的，走附加
-/// 说明通道时它不会出现（`koharu-glossary-design.md` §3.1）。漏掉它，模型会把先例里的译名当成待处理
-/// 内容原样抄进译文。
-const CONTEXT_HEADER: &str = "Earlier dialogue from this work, already translated. \
-Reference only — do not translate it, do not output it, and do not comment on it. \
-Reuse its wording and naming wherever the same words appear in the page you are given.";
-
-/// 注入内容的字节预算。
-///
-/// 约 8 KiB，也就是两千多个 token。它要和「这一页要翻的文本」抢同一个上下文窗口，所以不能大到把正文挤
-/// 出去。注意它只约束跨章上文：章内上文由翻译阶段逐页组装，自带一个页数上限（见
-/// `koharu_pipeline::MAX_CONTEXT_PAGES`），而人工资料优先到不会被丢，所以过大时只能如实超出去。
-const BUDGET: usize = 8 * 1024;
-
-/// 跨章上文旁挂文件的前缀。文件名为 `context-<章序号>.json`，与漫画索引同目录。
+/// 上文旁挂文件的前缀。文件名为 `context-<章序号>.json`，与漫画索引同目录。
 const CONTEXT_FILE_PREFIX: &str = "context-";
-
-/// 一条双语对照。
-///
-/// 上文存的是对照而不是术语：术语一致性由人工资料负责，上文负责的是「模型看到自己刚翻完的写法」
-/// （`koharu-glossary-design.md` §1.2、§2.6）。
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-pub(crate) struct ContextEntry {
-    pub source: String,
-    pub translation: String,
-}
-
-impl ContextEntry {
-    fn new(source: impl Into<String>, translation: impl Into<String>) -> Self {
-        Self {
-            source: source.into(),
-            translation: translation.into(),
-        }
-    }
-}
 
 /// 渲染一段注入内容需要的全部输入。
 ///
@@ -74,8 +40,6 @@ pub(crate) struct Injection {
     /// 术语表。命中判定用的 `haystack` 是整部漫画的原文，不是单页原文。
     pub glossary: Glossary,
     pub haystack: String,
-    /// 上一章末尾的双语对照，按阅读顺序，最近的在后面。
-    pub cross_chapter: Vec<ContextEntry>,
     /// 用户在设置里写的全局指导，排在最后作为跨作品的兜底。
     pub global: Option<String>,
     /// 段的顺序。`None` 用默认顺序；给它一份别的顺序就是换一种权重取舍，而不是改渲染逻辑。
@@ -89,33 +53,22 @@ pub(crate) enum Segment {
     Guidance,
     /// 术语表命中的条目。
     Glossary,
-    /// 上一章末尾的双语对照。
-    CrossChapter,
     /// 用户全局指导。
     Global,
 }
 
 impl Segment {
     /// 默认顺序：一般到特殊，参考垫底。
-    const DEFAULT_ORDER: [Segment; 4] = [
-        Segment::Guidance,
-        Segment::Glossary,
-        Segment::CrossChapter,
-        Segment::Global,
-    ];
+    const DEFAULT_ORDER: [Segment; 3] = [Segment::Guidance, Segment::Glossary, Segment::Global];
 }
 
 /// 渲染结果。
 #[derive(Debug)]
 pub(crate) struct Rendered {
-    /// 要追加到附加说明末尾的文本。空串表示这一批不注入任何东西。
+    /// 要写进附加说明的文本。空串表示这一批不注入任何东西。
     pub text: String,
     /// 待译内容里命中的术语条数。
     pub matched: usize,
-    /// 实际写进 `text` 的上文条数。
-    pub injected: usize,
-    /// 因为预算被丢掉的条文数。
-    pub dropped: usize,
     /// 服务商不接受提示词，因此全部注入内容都不会生效。
     pub unsupported: bool,
 }
@@ -136,27 +89,19 @@ pub(crate) fn accepts_instructions(provider: koharu_translator::Provider) -> boo
 /// 把各段拼成一段可以追加到附加说明里的散文。
 pub(crate) fn render(injection: &Injection, provider: koharu_translator::Provider) -> Rendered {
     let matched = glossary::matched_entries(&injection.glossary, &injection.haystack);
-    let terms = glossary::render(&injection.glossary, &matched);
-    let total = injection.cross_chapter.len();
     if !accepts_instructions(provider) {
         return Rendered {
             text: String::new(),
             matched: matched.len(),
-            injected: 0,
-            dropped: total,
             unsupported: true,
         };
     }
 
-    let mut cross_chapter = injection.cross_chapter.clone();
-    trim_to_budget(&mut cross_chapter);
-
     let blocks = [
         (Segment::Guidance, one_paragraph(&injection.guidance)),
-        (Segment::Glossary, terms),
         (
-            Segment::CrossChapter,
-            context_block(&cross_chapter),
+            Segment::Glossary,
+            glossary::render(&injection.glossary, &matched),
         ),
         (
             Segment::Global,
@@ -179,47 +124,10 @@ pub(crate) fn render(injection: &Injection, provider: koharu_translator::Provide
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let injected = cross_chapter.len();
     Rendered {
         text,
         matched: matched.len(),
-        injected,
-        dropped: total - injected,
         unsupported: false,
-    }
-}
-
-/// 跨章上文段落。抬头那句约束必须自带：系统提示词里对应的那句是随语境条目字段出现的，而跨章上文
-/// 走的是附加说明通道（`koharu-glossary-design.md` §3.1）。
-fn context_block(cross_chapter: &[ContextEntry]) -> String {
-    if cross_chapter.is_empty() {
-        return String::new();
-    }
-    let mut block = Vec::with_capacity(cross_chapter.len() + 1);
-    block.push(CONTEXT_HEADER.to_owned());
-    block.extend(cross_chapter.iter().map(|entry| {
-        format!(
-            "- {} → {}",
-            one_paragraph(&entry.source),
-            one_paragraph(&entry.translation)
-        )
-    }));
-    block.join("\n")
-}
-
-/// 丢掉超出预算的条文，直到装得下。
-///
-/// 丢的是**最早**的一条：跨章上文保留最近的写法，因为称谓与语气的一致性看的是最近的。人工资料不
-/// 在这里出现：它优先到不会被丢，所以上文全丢光还超预算就意味着人工资料本身太大，只能如实超出去。
-///
-/// 每一轮都重新量一次渲染后的长度，而不是拿「条目的字节和加一个常数」去估：预算的意义是「拼出来的
-/// 文本不超过这个数」，估出来的数与真实长度差一个抬头就等于没约束。
-fn trim_to_budget(cross_chapter: &mut Vec<ContextEntry>) {
-    while context_block(cross_chapter).len() > BUDGET {
-        if cross_chapter.is_empty() {
-            return;
-        }
-        cross_chapter.remove(0);
     }
 }
 
@@ -248,19 +156,15 @@ pub(crate) fn source_text(snapshot: &Snapshot) -> Result<String> {
     Ok(text)
 }
 
-/// 一个章节末尾 `pages` 页里已成对的原文与译文，用作下一章的跨章上文。
+/// 一个章节末尾 `pages` 页里已成对的原文与译文，按页分桶，用作下一章上文窗口的章外那一段。
 ///
-/// 抽取逻辑与翻译阶段的章内上文共用 `koharu_pipeline` 里的实现（`trailing_context`）：两者的判断
-/// 规则必须一致，否则同一条对照在章内与跨章两个通道里会得到不同的取舍。
-pub(crate) fn cross_chapter_context(snapshot: &Snapshot, pages: u32) -> Vec<ContextEntry> {
-    koharu_pipeline::trailing_context(snapshot, pages)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entry| ContextEntry::new(entry.source, entry.translation))
-        .collect()
+/// 抽取直接用 `koharu_pipeline::trailing_pages`：翻译阶段取窗口时用的是同一个函数，两处对「哪一页算
+/// 进来」的判断必须一致，否则同一条对照在章内与章外会得到不同的取舍。
+pub(crate) fn prior_chapter_context(snapshot: &Snapshot, pages: u32) -> Vec<Vec<TranslationContext>> {
+    koharu_pipeline::trailing_pages(snapshot, pages).unwrap_or_default()
 }
 
-/// 跨章上文旁挂文件的路径，按**目标章**的序号命名。
+/// 上文旁挂文件的路径，按**目标章**的序号命名。
 ///
 /// 按目标章而不是处理顺序命名：语义上的「前文」由作品结构决定，24 章的前文必定来自 23 章，即使这次批量
 /// 只处理了 24 章（`koharu-glossary-design.md` §2.4）。
@@ -268,17 +172,17 @@ fn context_path(directory: &Path, seq: u32) -> std::path::PathBuf {
     directory.join(format!("{CONTEXT_FILE_PREFIX}{seq}.json"))
 }
 
-/// 读一部漫画为某章准备的跨章上文。文件不存在是合法状态，返回空。
+/// 读一部漫画为某章准备的上文。文件不存在是合法状态，返回空。
 ///
-/// 读回来是空的两级降级都不报错：上一章没有译文，或文件被手工删了。两项都安静退化成「没有跨章上文」，
+/// 读回来是空的两级降级都不报错：上一章没有译文，或文件被手工删了。两项都安静退化成「没有上文」，
 /// 退回人工资料（`koharu-glossary-design.md` §2.5）。
-pub(crate) fn load_cross_chapter(directory: &Path, seq: u32) -> Vec<ContextEntry> {
+pub(crate) fn load_prior_context(directory: &Path, seq: u32) -> Vec<Vec<TranslationContext>> {
     let path = context_path(directory, seq);
     let Ok(contents) = fs::read_to_string(&path) else {
         return Vec::new();
     };
-    match serde_json::from_str::<Vec<ContextEntry>>(&contents) {
-        Ok(entries) => entries,
+    match serde_json::from_str::<Vec<Vec<TranslationContext>>>(&contents) {
+        Ok(pages) => pages,
         Err(error) => {
             // 旁挂文件是派生数据，坏掉只影响这一次的增强。删掉它比每次都失败好：下一次预扫描会重写。
             tracing::warn!(%error, path = %path.display(), "discarding an unreadable context file");
@@ -288,15 +192,20 @@ pub(crate) fn load_cross_chapter(directory: &Path, seq: u32) -> Vec<ContextEntry
     }
 }
 
-/// 写一部漫画为某章准备的跨章上文。
-pub(crate) fn save_cross_chapter(directory: &Path, seq: u32, entries: &[ContextEntry]) -> Result<()> {
+/// 写一部漫画为某章准备的上文。
+///
+/// 空就是上一章没有译文，清掉旧文件，免得这一批跑在陈旧基线上。
+pub(crate) fn save_prior_context(
+    directory: &Path,
+    seq: u32,
+    pages: &[Vec<TranslationContext>],
+) -> Result<()> {
     let path = context_path(directory, seq);
-    if entries.is_empty() {
-        // 上一章没有译文就是没有跨章上文。清掉旧文件，免得这一批跑在陈旧基线上。
+    if pages.is_empty() {
         let _ = fs::remove_file(&path);
         return Ok(());
     }
-    let contents = serde_json::to_string(entries).context("failed to encode the cross-chapter context")?;
+    let contents = serde_json::to_string(pages).context("failed to encode the prior context")?;
     fs::write(&path, contents).with_context(|| format!("failed to write {}", path.display()))
 }
 
@@ -343,8 +252,11 @@ mod tests {
         }
     }
 
-    fn pair(source: &str, translation: &str) -> ContextEntry {
-        ContextEntry::new(source, translation)
+    fn pair(source: &str, translation: &str) -> TranslationContext {
+        TranslationContext {
+            source: source.to_owned(),
+            translation: translation.to_owned(),
+        }
     }
 
     fn injection(entries: Vec<GlossaryEntry>, guidance: &str) -> Injection {
@@ -352,7 +264,6 @@ mod tests {
             guidance: guidance.to_owned(),
             glossary: glossary(entries),
             haystack: "アリスは笑った".to_owned(),
-            cross_chapter: Vec::new(),
             global: None,
             order: None,
         }
@@ -413,8 +324,7 @@ mod tests {
 
     #[test]
     fn a_provider_without_prompts_injects_nothing_and_says_so() {
-        let mut built = injection(vec![entry("アリス", "Alice")], "keep it short");
-        built.cross_chapter.push(pair("こんにちは", "Hello"));
+        let built = injection(vec![entry("アリス", "Alice")], "keep it short");
         for provider in [
             koharu_translator::Provider::DeepL,
             koharu_translator::Provider::GoogleCloudTranslation,
@@ -424,7 +334,6 @@ mod tests {
             assert!(rendered.text.is_empty(), "{provider} drops the instructions");
             assert!(rendered.unsupported, "{provider} must be reported");
             assert_eq!(rendered.matched, 1, "the hit count is still worth reporting");
-            assert_eq!(rendered.dropped, 1, "and so is what was lost");
         }
         assert!(!render(&built, koharu_translator::Provider::Local).unsupported);
     }
@@ -432,34 +341,29 @@ mod tests {
     #[test]
     fn the_segments_appear_in_the_declared_order() {
         let mut built = injection(vec![entry("アリス", "Alice")], "Speak casually.");
-        built.cross_chapter.push(pair("やっほい", "Yo"));
         built.global = Some("Prefer British spellings.".to_owned());
 
         let text = render(&built, koharu_translator::Provider::Local).text;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("{needle} in\n{text}"));
         assert!(at("Speak casually.") < at("アリス"), "guidance before terminology");
-        assert!(at("アリス") < at(CONTEXT_HEADER), "terminology before precedent");
-        assert!(at(CONTEXT_HEADER) < at("Prefer British spellings."), "precedent before taste");
-        assert!(text.contains("- やっほい → Yo"), "{text}");
+        assert!(
+            at("アリス") < at("Prefer British spellings."),
+            "terminology before taste"
+        );
     }
 
     #[test]
     fn an_order_override_changes_the_weights_not_the_content() {
         let mut built = injection(vec![entry("アリス", "Alice")], "Speak casually.");
-        built.cross_chapter.push(pair("やっほい", "Yo"));
+        built.global = Some("Prefer British spellings.".to_owned());
         let straight = render(&built, koharu_translator::Provider::Local).text;
         assert!(straight.find("Speak casually.") < straight.find("アリス"));
 
-        built.order = Some(vec![
-            Segment::Glossary,
-            Segment::CrossChapter,
-            Segment::Guidance,
-            Segment::Global,
-        ]);
+        built.order = Some(vec![Segment::Glossary, Segment::Global, Segment::Guidance]);
         let reordered = render(&built, koharu_translator::Provider::Local).text;
         assert_ne!(straight, reordered);
-        assert!(reordered.find("アリス") < reordered.find(CONTEXT_HEADER));
-        assert!(reordered.find(CONTEXT_HEADER) < reordered.find("Speak casually."));
+        assert!(reordered.find("アリス") < reordered.find("Prefer British spellings."));
+        assert!(reordered.find("Prefer British spellings.") < reordered.find("Speak casually."));
     }
 
     #[test]
@@ -477,43 +381,22 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_drops_the_oldest_cross_chapter_pair() {
-        // 丢的是最早的一条：跨章上文保留最近的写法，因为称谓与语气的一致性看的是最近的。
-        let mut built = injection(Vec::new(), "");
-        built.cross_chapter = (0..200)
-            .map(|index| pair(&format!("pre{index}"), &"p".repeat(64)))
-            .collect();
-
-        let rendered = render(&built, koharu_translator::Provider::Local);
-        assert!(rendered.text.len() <= BUDGET, "must fit the budget");
-        assert_eq!(rendered.injected + rendered.dropped, 200);
-        assert!(!rendered.text.contains("pre0"), "the earliest pair goes");
-        assert!(rendered.text.contains("pre199"), "the most recent one stays");
-        assert_eq!(
-            built.cross_chapter.len(),
-            200,
-            "the caller's copy is never mutated"
-        );
-    }
-
-    #[test]
-    fn manual_assets_survive_an_over_budget_table() {
+    fn an_oversized_table_is_still_injected_whole() {
+        // 人工资料是用户手写的，一个字都不能丢。这里没有预算，因此也没有「被丢掉多少」要报给界面。
         let entries = (0..400)
             .map(|index| entry(&format!("ワープ{index}"), &"Warp".repeat(16)))
             .collect();
-        let mut built = injection(entries, &"g".repeat(BUDGET));
+        let mut built = injection(entries, "");
         built.haystack = (0..400).map(|index| format!("ワープ{index} ")).collect();
 
         let rendered = render(&built, koharu_translator::Provider::Local);
-        assert!(
-            rendered.text.len() > BUDGET,
-            "manual assets are never dropped, so they are not bounded by it"
-        );
         assert_eq!(rendered.matched, 400);
-        assert_eq!(
-            rendered.injected, 0,
-            "an over-budget table leaves no room for precedent"
-        );
+        for index in 0..400 {
+            assert!(
+                rendered.text.contains(&format!("ワープ{index} → ")),
+                "entry {index} is missing"
+            );
+        }
     }
 
     #[tokio::test]
@@ -523,27 +406,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_cross_chapter_context_takes_the_tail_of_the_previous_chapter() {
+    async fn the_prior_context_takes_the_tail_page_by_page() {
         let snapshot = project(&[
             ("oldest", Some("一番古く")),
             ("middle", None),
             ("newest", Some("一番新しい")),
         ])
         .await;
-        let context = cross_chapter_context(&snapshot, 2);
-        assert_eq!(
-            context
+        let sources = |pages: Vec<Vec<TranslationContext>>| {
+            pages
                 .iter()
-                .map(|entry| entry.source.as_str())
-                .collect::<Vec<_>>(),
-            vec!["newest"],
-            "a page without a translation contributes nothing"
+                .map(|pairs| {
+                    pairs
+                        .iter()
+                        .map(|entry| entry.source.clone())
+                        .collect::<Vec<String>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            sources(prior_chapter_context(&snapshot, 2)),
+            vec![vec![], vec!["newest"]],
+            "a page without a translation keeps its slot and contributes nothing"
         );
-        assert!(cross_chapter_context(&snapshot, 0).is_empty());
+        assert!(prior_chapter_context(&snapshot, 0).is_empty());
     }
 
     #[test]
-    fn the_cross_chapter_file_is_named_after_the_target_chapter() {
+    fn the_context_file_is_named_after_the_target_chapter() {
         let directory = std::env::temp_dir().join(format!(
             "koharu-context-{}-{}",
             std::process::id(),
@@ -554,19 +444,29 @@ mod tests {
         ));
         fs::create_dir_all(&directory).expect("create fixture");
 
-        assert!(load_cross_chapter(&directory, 24).is_empty(), "a missing file");
-        save_cross_chapter(&directory, 24, &[pair("前", "before")]).expect("save");
+        let two_pages = vec![vec![], vec![pair("前", "before")]];
+        assert!(load_prior_context(&directory, 24).is_empty(), "a missing file");
+        save_prior_context(&directory, 24, &two_pages).expect("save");
         assert!(directory.join("context-24.json").is_file());
-        assert_eq!(load_cross_chapter(&directory, 24), vec![pair("前", "before")]);
+        assert_eq!(load_prior_context(&directory, 24), two_pages);
         // 序号 23 读的是自己的文件，与 24 无关。
-        assert!(load_cross_chapter(&directory, 23).is_empty());
+        assert!(load_prior_context(&directory, 23).is_empty());
 
-        // 空就是没有跨章上文，清掉旧文件而不是留一份陈旧基线。
-        save_cross_chapter(&directory, 24, &[]).expect("clear");
+        // 空就是没有上文，清掉旧文件而不是留一份陈旧基线。
+        save_prior_context(&directory, 24, &[]).expect("clear");
         assert!(!directory.join("context-24.json").exists());
 
+        // 上一版留下的扁平数组读不出来，按降级安静丢弃，下一批预扫描会重写。
+        fs::write(directory.join("context-24.json"), b"[{\"source\":\"a\",\"translation\":\"b\"}]")
+            .expect("write the old shape");
+        assert!(
+            load_prior_context(&directory, 24).is_empty(),
+            "an unreadable shape degrades quietly"
+        );
+        assert!(!directory.join("context-24.json").exists(), "and is discarded");
+
         fs::write(directory.join("context-24.json"), b"{ not json").expect("write broken");
-        assert!(load_cross_chapter(&directory, 24).is_empty(), "a broken file degrades quietly");
+        assert!(load_prior_context(&directory, 24).is_empty(), "a broken file degrades quietly");
         assert!(!directory.join("context-24.json").exists(), "and is discarded");
 
         fs::remove_dir_all(&directory).expect("remove fixture");

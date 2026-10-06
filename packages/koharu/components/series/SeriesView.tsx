@@ -181,12 +181,7 @@ export function SeriesView({ id }: { id: string }) {
 
       {run && (
         <div className='flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-border/40 px-4 py-1.5 text-[10px] text-muted-foreground'>
-          <span className='tabular-nums'>
-            {t('series.run.summary', { matched: run.matched, injected: run.injected })}
-          </span>
-          {run.dropped > 0 && (
-            <span className='tabular-nums'>{t('series.run.dropped', { count: run.dropped })}</span>
-          )}
+          <span className='tabular-nums'>{t('series.run.summary', { matched: run.matched })}</span>
           {run.unsupported && (
             <span className='text-destructive'>{t('series.run.unsupported')}</span>
           )}

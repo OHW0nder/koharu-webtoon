@@ -135,9 +135,9 @@ export const commands = {
 	 *  open a chapter, run the whole project scope, wait for the job, move on. Every chapter commits on
 	 *  its own, so an interrupted batch resumes by simply running the chapters that are still pending.
 	 * 
-	 *  **注入内容在每章开始前换一次。** 翻译附加说明是这一次批量唯一能换掉的通道（`injection` 模块的模块
-	 *  注释），换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文各不相同，而本地模型只读
-	 *  一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户配置，漫画的资料不会漏进设置页。
+	 *  **注入内容在每章开始前换一次。** 换的动作是写管线跑的那份内存配置，所以每章的指导、术语命中与上文
+	 *  窗口都各不相同，而本地模型只读一次盘：重建阶段运行器不重建翻译器。整个批次跑完后句柄恢复成用户
+	 *  配置，漫画的资料不会漏进设置页。
 	 */
 	processSeriesChapters: (id: string, projects: string[], operation: Operation) => __TAURI_INVOKE<SeriesRun>("process_series_chapters", { id, projects, operation }),
 	/**
@@ -735,21 +735,16 @@ export type SeriesChapter = {
 };
 
 /**
- *  一次批量实际注入进去的东西，用来让界面说清效果为什么不稳。
+ *  一次批量实际注入进去的东西。
  * 
- *  命中数与注入数必须能分开看：命中数是术语表里出现在原文中的条数，注入数是最终写进提示词的上文条数。
- *  两者不一致就说明字节预算把上文截断了，而截断本身是静默的（`docs/reference/koharu-glossary-design.md`
- *  §4.2）。
+ *  只需要报命中数：上文不再走注入通道，它的总量由用户自己设的 `context_pages` 页数上限约束，不存在
+ *  静默截断，因此没有「被丢掉多少」需要解释。
  */
 export type SeriesRun = {
 	/**  跑完的章数。 */
 	chapters: number,
 	/**  术语表里出现在原文中的条数。整批共用同一份原文，所以这个值在批内不变。 */
 	matched: number,
-	/**  写进提示词的上文条数，各章累加。 */
-	injected: number,
-	/**  因为字节预算被丢掉的条文数，各章累加。 */
-	dropped: number,
 	/**  当前服务商不接受提示词，这一批的注入内容全部无效。 */
 	unsupported: boolean,
 };
@@ -779,8 +774,10 @@ export type SeriesSettings = {
 	 *  章内上文回溯的页数：翻译第 N 页时带上第 N−1 到第 N−N 页的成对双语对照。0 表示不注入。
 	 * 
 	 *  这不是章的资料而是**运行参数**——它决定翻译阶段每次请求带多少先例，所以归到批量执行时
-	 *  写进管线配置，而不像指导与术语表那样渲染进附加说明。合适的距离取决于模型与作品，只能实测
-	 *  确定，所以它是用户可调的；硬上限由 `koharu_pipeline::MAX_CONTEXT_PAGES` 兜住。
+	 *  写进管线配置，而不像指导与术语表那样渲染进附加说明。上文窗口跨章连续，所以这一个值同时是
+	 *  章内与章外的回溯距离：翻到本章第 1 页时窗口整段来自上一章末尾，翻到第 2 页时让出一页换成本章
+	 *  第 1 页，以此类推。合适的距离取决于模型与作品，只能实测确定，所以它是用户可调的；硬上限由
+	 *  `koharu_pipeline::MAX_CONTEXT_PAGES` 兜住。
 	 */
 	context_pages?: number,
 };
@@ -839,12 +836,26 @@ export type TranslationConfig = {
 	target_language: string,
 	instructions: string | null,
 	/**
-	 *  章内上文回溯的页数：翻译第 N 页时带上第 N−1 至第 N−N 页的成对双语对照。0 表示不注入。
+	 *  上文窗口的页数：翻译一页时带上它之前最近的若干页成对双语对照。0 表示不注入。
 	 * 
-	 *  走的是语境条目通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的全部意义在于
-	 *  逐页不同（见 `context` 模块）。值由漫画级设置给出，上限是 [`crate::MAX_CONTEXT_PAGES`]。
+	 *  窗口跨章边界连续，所以这一个值同时是章内与跨章的回溯距离，用户只调一个旋钮。走的是语境条目
+	 *  通道而不是附加说明，因为附加说明是整批共用的一段散文，而上文的全部意义在于逐页不同
+	 *  （见 `context` 模块）。值由漫画级设置给出，上限是 [`crate::MAX_CONTEXT_PAGES`]。
 	 */
 	context_pages?: number,
+	/**
+	 *  窗口里属于上一章的那几页：外层是页，内层是该页已成对的原文与译文，按阅读顺序。
+	 * 
+	 *  由漫画层在每章开始前写一次，翻完一章后用刚跑出来的译文覆盖给下一章，所以同一批里排在后面的
+	 *  章吃到的是鲜的。翻译阶段只按窗口余量取它的尾部：本章的页数够了，它就完全不参与。非批量运行
+	 *  是空的，那时窗口只有章内部分。
+	 */
+	prior_chapter_context?: TranslationContext[][],
+};
+
+export type TranslationContext = {
+	source: string,
+	translation: string,
 };
 
 export type TypesettingConfig = {
