@@ -10,7 +10,8 @@
 //! （`injection`）、预算怎么分（上下文管线）都另有归属。
 //!
 //! 匹配与渲染的口径来自 `docs/reference/koharu-glossary-design.md` §4.1 与 §3.1：全文匹配，不做
-//! 模糊匹配；拉丁与西里尔要求词边界，中日韩关闭词边界按子串匹配。
+//! 模糊匹配；多词术语任一词元命中即算命中，因为简称是正文里的常态；拉丁与西里尔要求词边界，
+//! 中日韩关闭词边界按子串匹配。
 
 use std::{collections::BTreeMap, fs, io, path::Path};
 
@@ -68,7 +69,7 @@ pub(crate) fn save(dir: &Path, glossary: &Glossary) -> Result<()> {
 /// 顺序必须确定：同一份输入要产出逐字节相同的提示词，否则同一页重跑会得到不同的翻译，而缓存键
 /// 又是按提示词算的。
 ///
-/// `haystack` 是整部漫画的原文而不是单页原文，因此这里的判断是全量扫描而不是逐页扫描
+/// `haystack` 是当前章的原文而不是单页原文，因此这里的判断是一章一次全量扫描而不是逐页扫描
 /// （`docs/reference/koharu-glossary-design.md` §4.3）。归一化只做一次：放进循环里就是每条术语
 /// 重扫一遍全文，术语表上百条时会在批量预扫描上放大成明显的耗时。
 pub(crate) fn matched_entries<'a>(
@@ -142,21 +143,31 @@ pub(crate) fn render(glossary: &Glossary, matched: &[&GlossaryEntry]) -> String 
 }
 
 /// 一段归一化原文是否出现在归一化全文里。
+///
+/// **多词术语任一词元命中即算命中。** 人名与专有名词在正文里常以简称出现：作者写全名建
+/// 立一次，之后只叫名（`Jack Hansen` 的 `Jack`）。要求整串会让那些页拿不到定稿译名，而译名
+/// 在页与页之间不一致是读者一眼能看出的缺陷，因此宁可多注入一条词条。
+///
+/// 词元各自按词边界判定，所以 `Jack` 仍然不会命中 `Jackhammer`。
 fn occurs(source: &str, haystack: &str) -> bool {
-    if source.is_empty() {
+    source.split_whitespace().any(|token| occurs_token(token, haystack))
+}
+
+fn occurs_token(token: &str, haystack: &str) -> bool {
+    if token.is_empty() {
         return false;
     }
-    let boundary = needs_word_boundary(source);
+    let boundary = needs_word_boundary(token);
     let mut from = 0;
-    while let Some(offset) = haystack[from..].find(source) {
+    while let Some(offset) = haystack[from..].find(token) {
         let start = from + offset;
-        let end = start + source.len();
-        if !boundary || bounded_at(source, haystack, start, end) {
+        let end = start + token.len();
+        if !boundary || bounded_at(token, haystack, start, end) {
             return true;
         }
         // 从命中的下一个字符接着找，而不是从命中末尾。原文含标点时（`a-a`）两个命中位置可以重叠，
         // 跳过重叠段会漏掉后面那个边界合规的命中。步长取首字符的字节长度，保证切片落在字符边界上。
-        from = start + source.chars().next().map_or(1, char::len_utf8);
+        from = start + token.chars().next().map_or(1, char::len_utf8);
     }
     false
 }
@@ -366,6 +377,35 @@ mod tests {
             1,
             "a comma starts the word and the end of the text closes it"
         );
+    }
+
+    #[test]
+    fn a_multi_word_term_matches_on_any_of_its_words() {
+        // 简称是正文里的常态：人名只叫名，机构只叫后半截。要求整串会让那些页拿不到定稿译名，
+        // 于是同一角色在有的页叫「贾科汉森」、有的页叫「杰克」。
+        let table = glossary(vec![entry("Jack Hansen", "贾科汉森")]);
+        for haystack in [
+            "jack hansen は", // 整串
+            "hey jack",       // 只叫名
+            "hansen said",    // 只叫姓
+            "the JACK HANSEN", // 大小写
+        ] {
+            assert_eq!(
+                matched_entries(&table, haystack).len(),
+                1,
+                "should match: {haystack}"
+            );
+        }
+        for haystack in [
+            "jackhammer",   // 词边界挡住了
+            "hansenite",    // 同上
+            "no name here", // 一个词元都没出现
+        ] {
+            assert!(
+                matched_entries(&table, haystack).is_empty(),
+                "should not match: {haystack}"
+            );
+        }
     }
 
     #[test]
