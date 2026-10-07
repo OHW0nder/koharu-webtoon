@@ -1460,10 +1460,11 @@ async fn current_snapshot(handle: &AppHandle<CefRuntime>) -> Result<koharu_scene
 
 /// Exports the chosen chapters as one archive that keeps the shelf's shape.
 ///
-/// **A volume exports as a single `.cbz` whose layout mirrors the shelf:** the series name, then a
-/// folder per chapter, then that chapter's pages. Unpacking it gives back
-/// `Demo Title/Ch10/00101.jpg`, so the archive reads the way the project does. Exporting one chapter
-/// on its own is a different deliverable and stays flat — that archive *is* the chapter.
+/// **A volume exports as a single `.cbz` holding one folder per chapter.** Unpacking
+/// `Demo Title ch10-ch21.cbz` gives back `Ch10/00101.jpg`, `Ch11/00101.jpg` and so on. The series
+/// name is not repeated as a directory: the file name already carries it, and a second copy only
+/// nests the archive one level deeper without adding anything a reader can use. Exporting one
+/// chapter on its own is a different deliverable and stays flat — that archive *is* the chapter.
 ///
 /// **The file name carries the range.** `Demo Title ch10-ch21.cbz` says which chapters are inside
 /// without opening it, and the numbers are the chapters' own slots, so a range like `ch10-ch12` in
@@ -1527,7 +1528,7 @@ pub(crate) async fn export_series_chapters(
         replace_project(&handle, opened).await?;
         let snapshot = current_snapshot(&handle).await?;
         let pages = output::render_pages(snapshot, ExportFormat::Cbz, &desktop).await?;
-        let folder = format!("{}/{}", title, entry_name(&chapter.title));
+        let folder = entry_name(&chapter.title);
         for (name, bytes) in pages {
             // PNG data is already compressed.
             let options = zip::write::SimpleFileOptions::default()
