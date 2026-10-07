@@ -183,7 +183,10 @@ function ProcessRange({
       disabled={busy}
       placeholder='#'
       aria-label={label}
-      className='h-7 w-12 shrink-0 text-[11px] tabular-nums'
+      // Chapter numbers reach three digits, and the native number spinner claims most of the
+      // field's content width, which pushed the last digit out of sight. Nothing here is dialled,
+      // so the spinner is dropped rather than left to compete with the number.
+      className='h-7 w-14 shrink-0 [appearance:textfield] text-[11px] tabular-nums [&::-moz-number-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
       onChange={(event) => onChange(event.currentTarget.value)}
     />
   )
