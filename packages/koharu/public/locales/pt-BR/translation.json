@@ -483,8 +483,19 @@
       "label": "Faixas de anúncio do webtoon",
       "tail": "Rodapé (a partir da base)"
     },
+    "actions": {
+      "description": "Adicione capítulos, baixe os que faltam e execute uma etapa em um intervalo de capítulos.",
+      "run": "Processar",
+      "sources": "Origem dos capítulos",
+      "title": "Importação e processamento"
+    },
     "backToShelf": "Voltar à estante",
     "chapterCount": "{{count}} capítulos",
+    "chapters": {
+      "search": "Buscar capítulos",
+      "searchEmpty": "Nenhum capítulo corresponde à busca.",
+      "title": "Capítulos"
+    },
     "context": {
       "hint": "Ao traduzir uma página, as páginas anteriores também são enviadas como exemplos já traduzidos, para manter a consistência. A janela atravessa a virada de capítulo: a primeira página de um capítulo volta até o final do anterior, e cada página seguinte troca uma página do capítulo anterior por uma do atual. Uma página ainda não traduzida mantém seu lugar, mas não contribui com nada. Mais páginas custam mais tokens; o limite é {{max}}.",
       "pages": "Páginas de contexto",

@@ -11,7 +11,7 @@ import {
   useSaveSeriesSettings,
   useSeriesSettings,
 } from '@/lib/queries'
-import { useKoharuStore } from '@/lib/store'
+import { useJobsRunning } from '@/lib/store'
 import type {
   AdBands,
   Glossary,
@@ -26,6 +26,7 @@ import { NativeSelect, NativeSelectOption } from '@koharu/ui/components/native-s
 import { ScrollArea } from '@koharu/ui/components/scroll-area'
 import { Switch } from '@koharu/ui/components/switch'
 import { Textarea } from '@koharu/ui/components/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@koharu/ui/components/tooltip'
 
 /** The seven kinds a term can carry. Mirrors the backend enum; categories only filter and sort in
  *  the interface and never reach the prompt. */
@@ -127,18 +128,22 @@ function useDebouncedSave<T>({
   return { seed, armed }
 }
 
-/** Series-scoped settings, on the chapter management page. The ad bands and the translation
+/** Series-scoped settings, on the column beside the chapter list. The ad bands and the translation
  *  guidance are one index write and therefore one draft; the glossary is a separate file and gets
- *  its own writer below. */
+ *  its own writer below.
+ *
+ *  Everything stacks in a single column. A two-column arrangement was tried here and had to go: the
+ *  media query that drives it measures the window, not this pane, so the columns appeared whenever
+ *  the window was wide enough — right across a 340px column — and squeezed the fields instead of
+ *  giving them more room. */
 export function SeriesSettings({ id, webtoonChapters }: { id: string; webtoonChapters: number }) {
   const { t } = useTranslation()
   const settings = useSeriesSettings(id)
   const { saveSettings, savingSettings } = useSaveSeriesSettings(id)
-  const jobs = useKoharuStore((state) => state.jobs)
   // These writes are rejected while a job runs: the batch already snapshotted the series assets, so
   // a change now would not reach the running batch but would leave the interface describing a run
   // that is not happening.
-  const running = Object.values(jobs).some((job) => job.state === 'running')
+  const running = useJobsRunning()
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const seeded = useRef(false)
 
@@ -177,44 +182,42 @@ export function SeriesSettings({ id, webtoonChapters }: { id: string; webtoonCha
         <p className='text-[10px] text-muted-foreground'>{t('common.loading')}</p>
       ) : (
         <fieldset disabled={running} className='m-0 grid gap-3 border-0 p-0 disabled:opacity-60'>
-          <div className='grid gap-4 md:grid-cols-2'>
-            <div className='grid content-start gap-2'>
-              <h3 className='text-[11px] font-medium'>{t('series.ad.label')}</h3>
-              <AdBandField
-                label={t('series.ad.head')}
-                value={draft.ad.head}
-                clearLabel={t('series.ad.clearHead')}
-                onChange={(head) => setDraft({ ...draft, ad: { ...draft.ad, head } })}
-              />
-              <AdBandField
-                label={t('series.ad.tail')}
-                value={draft.ad.tail}
-                clearLabel={t('series.ad.clearTail')}
-                onChange={(tail) => setDraft({ ...draft, ad: { ...draft.ad, tail } })}
-              />
-              <p className='text-[9px] leading-4 text-muted-foreground'>{t('series.ad.hint')}</p>
-              <p className='text-[9px] text-muted-foreground tabular-nums'>
-                {t('series.ad.appliesTo', { count: webtoonChapters })}
-              </p>
-            </div>
-
-            <div className='grid content-start gap-2'>
-              <h3 className='text-[11px] font-medium'>{t('series.settings.guidance')}</h3>
-              <Textarea
-                value={draft.guidance}
-                aria-label={t('series.settings.guidance')}
-                placeholder={t('series.settings.guidancePlaceholder')}
-                className='field-sizing-fixed max-h-48 min-h-20 resize-y overflow-y-auto text-[11px] leading-4'
-                onChange={(event) => setDraft({ ...draft, guidance: event.currentTarget.value })}
-              />
-              <p className='text-[9px] leading-4 text-muted-foreground'>
-                {t('series.settings.guidanceHint')}
-              </p>
-            </div>
+          <div className='grid content-start gap-1.5'>
+            <h3 className='text-[11px] font-medium'>{t('series.ad.label')}</h3>
+            <AdBandField
+              label={t('series.ad.head')}
+              value={draft.ad.head}
+              clearLabel={t('series.ad.clearHead')}
+              onChange={(head) => setDraft({ ...draft, ad: { ...draft.ad, head } })}
+            />
+            <AdBandField
+              label={t('series.ad.tail')}
+              value={draft.ad.tail}
+              clearLabel={t('series.ad.clearTail')}
+              onChange={(tail) => setDraft({ ...draft, ad: { ...draft.ad, tail } })}
+            />
+            <p className='text-[9px] leading-4 text-muted-foreground'>{t('series.ad.hint')}</p>
+            <p className='text-[9px] text-muted-foreground tabular-nums'>
+              {t('series.ad.appliesTo', { count: webtoonChapters })}
+            </p>
           </div>
 
-          <div className='grid content-start gap-2 border-t border-border/60 pt-3 md:grid-cols-2'>
-            <h3 className='text-[11px] font-medium md:col-span-2'>{t('series.context.title')}</h3>
+          <div className='grid content-start gap-1.5 border-t border-border/60 pt-3'>
+            <h3 className='text-[11px] font-medium'>{t('series.settings.guidance')}</h3>
+            <Textarea
+              value={draft.guidance}
+              aria-label={t('series.settings.guidance')}
+              placeholder={t('series.settings.guidancePlaceholder')}
+              className='field-sizing-fixed max-h-48 min-h-20 resize-y overflow-y-auto text-[11px] leading-4'
+              onChange={(event) => setDraft({ ...draft, guidance: event.currentTarget.value })}
+            />
+            <p className='text-[9px] leading-4 text-muted-foreground'>
+              {t('series.settings.guidanceHint')}
+            </p>
+          </div>
+
+          <div className='grid content-start gap-1.5 border-t border-border/60 pt-3'>
+            <h3 className='text-[11px] font-medium'>{t('series.context.title')}</h3>
             <label className='flex items-center gap-2 text-[10px] text-muted-foreground'>
               <Input
                 type='number'
@@ -371,9 +374,30 @@ function GlossaryPanel({ id, running }: { id: string; running: boolean }) {
   }
 
   return (
-    <div className='grid gap-2'>
+    <div className='grid gap-2 border-t border-border/60 pt-3'>
+      <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+        <h3 className='text-[11px] font-medium'>{t('series.glossary.title')}</h3>
+        <span className='text-[9px] text-muted-foreground tabular-nums'>
+          {t('series.glossary.entryCount', { count: draft?.entries.length ?? 0 })}
+        </span>
+        <span className='ml-auto flex items-center gap-1.5'>
+          {/* The table-level switch is what makes a glossary inject at all: a table nobody ever
+              saved reads back disabled, so without this the terms could be edited forever and
+              never reach a prompt. */}
+          <span className='text-[9px] text-muted-foreground'>{t('series.glossary.enabled')}</span>
+          <Switch
+            size='sm'
+            checked={draft?.enabled ?? false}
+            disabled={!draft}
+            aria-label={t('series.glossary.enabled')}
+            onCheckedChange={(enabled) =>
+              setDraft((current) => (current ? { ...current, enabled } : current))
+            }
+          />
+        </span>
+      </div>
+
       <div className='flex flex-wrap items-center gap-1'>
-        <h3 className='mr-1 text-[11px] font-medium'>{t('series.glossary.title')}</h3>
         <Button
           type='button'
           size='sm'
@@ -411,24 +435,6 @@ function GlossaryPanel({ id, running }: { id: string; running: boolean }) {
           <Download className='size-3' />
           {t('series.glossary.export')}
         </Button>
-        <span className='ml-auto flex items-center gap-1.5'>
-          <span className='text-[9px] text-muted-foreground tabular-nums'>
-            {t('series.glossary.entryCount', { count: draft?.entries.length ?? 0 })}
-          </span>
-          {/* The table-level switch is what makes a glossary inject at all: a table nobody ever
-              saved reads back disabled, so without this the terms could be edited forever and
-              never reach a prompt. */}
-          <span className='text-[9px] text-muted-foreground'>{t('series.glossary.enabled')}</span>
-          <Switch
-            size='sm'
-            checked={draft?.enabled ?? false}
-            disabled={!draft}
-            aria-label={t('series.glossary.enabled')}
-            onCheckedChange={(enabled) =>
-              setDraft((current) => (current ? { ...current, enabled } : current))
-            }
-          />
-        </span>
         <input
           ref={file}
           type='file'
@@ -454,71 +460,90 @@ function GlossaryPanel({ id, running }: { id: string; running: boolean }) {
       ) : draft.entries.length === 0 ? (
         <p className='text-[10px] text-muted-foreground'>{t('series.glossary.empty')}</p>
       ) : (
-        <ScrollArea className='max-h-64' viewportClassName='p-1.5'>
+        <ScrollArea className='max-h-72' viewportClassName='p-0'>
+          {/* One entry per row of the column, not per row of a table: a six-column table only fits
+              a viewport-wide container, and this pane is a third of the window. The term keeps the
+              first line because that is the identity, and the category sits beside its translation
+              where a reader compares the two against each other. */}
           <ul className='grid gap-1.5'>
             {draft.entries.map((entry, index) => (
-              <li key={entry.id} className='flex flex-wrap items-center gap-1.5'>
-                <Input
-                  value={entry.source}
-                  aria-label={t('series.glossary.source')}
-                  placeholder={t('series.glossary.source')}
-                  className='h-7 min-w-32 flex-1 text-[11px]'
-                  onChange={(event) => update(index, { source: event.currentTarget.value })}
-                />
-                <Input
-                  value={entry.translation ?? ''}
-                  aria-label={t('series.glossary.translation')}
-                  placeholder={t('series.glossary.translation')}
-                  className='h-7 min-w-32 flex-1 text-[11px]'
-                  onChange={(event) =>
-                    update(index, { translation: event.currentTarget.value || null })
-                  }
-                />
-                <NativeSelect
-                  size='sm'
-                  value={entry.kind}
-                  aria-label={t('series.glossary.category')}
-                  className='w-28 shrink-0'
-                  onChange={(event) =>
-                    update(index, { kind: event.currentTarget.value as GlossaryKind })
-                  }
-                >
-                  {GLOSSARY_KINDS.map((kind) => (
-                    <NativeSelectOption key={kind} value={kind}>
-                      {t(`series.glossary.kinds.${kind}`)}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-                <Switch
-                  size='sm'
-                  checked={entry.enabled}
-                  aria-label={t('series.glossary.enabled')}
-                  onCheckedChange={(enabled) => update(index, { enabled })}
-                />
-                <Input
-                  value={entry.note}
-                  aria-label={t('series.glossary.note')}
-                  placeholder={t('series.glossary.notePlaceholder')}
-                  className='h-7 min-w-32 flex-1 text-[11px]'
-                  onChange={(event) => update(index, { note: event.currentTarget.value })}
-                />
-                {entry.source_origin !== 'user' && (
-                  <span className='shrink-0 text-[9px] text-muted-foreground'>
-                    {t(`series.glossary.origin.${entry.source_origin}`)}
-                  </span>
-                )}
-                <Button
-                  type='button'
-                  size='icon-sm'
-                  variant='ghost'
-                  aria-label={t('series.glossary.remove', {
-                    name: entry.source.trim() || t('series.glossary.untitled'),
-                  })}
-                  className='text-muted-foreground'
-                  onClick={() => remove(index)}
-                >
-                  <Trash2 className='size-3.5' />
-                </Button>
+              <li key={entry.id} className='grid gap-1 rounded-lg border border-border/50 p-1.5'>
+                <div className='flex items-center gap-1'>
+                  <Input
+                    value={entry.source}
+                    aria-label={t('series.glossary.source')}
+                    placeholder={t('series.glossary.source')}
+                    className='h-7 min-w-0 flex-1 text-[11px]'
+                    onChange={(event) => update(index, { source: event.currentTarget.value })}
+                  />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Switch
+                          size='sm'
+                          checked={entry.enabled}
+                          aria-label={t('series.glossary.enabled')}
+                          onCheckedChange={(enabled) => update(index, { enabled })}
+                        />
+                      }
+                    />
+                    <TooltipContent side='left'>{t('series.glossary.enabled')}</TooltipContent>
+                  </Tooltip>
+                  <Button
+                    type='button'
+                    size='icon-sm'
+                    variant='ghost'
+                    aria-label={t('series.glossary.remove', {
+                      name: entry.source.trim() || t('series.glossary.untitled'),
+                    })}
+                    className='shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
+                    onClick={() => remove(index)}
+                  >
+                    <Trash2 className='size-3.5' />
+                  </Button>
+                </div>
+
+                <div className='flex items-center gap-1'>
+                  <Input
+                    value={entry.translation ?? ''}
+                    aria-label={t('series.glossary.translation')}
+                    placeholder={t('series.glossary.translation')}
+                    className='h-7 min-w-0 flex-1 text-[11px]'
+                    onChange={(event) =>
+                      update(index, { translation: event.currentTarget.value || null })
+                    }
+                  />
+                  <NativeSelect
+                    size='sm'
+                    value={entry.kind}
+                    aria-label={t('series.glossary.category')}
+                    className='w-24 shrink-0'
+                    onChange={(event) =>
+                      update(index, { kind: event.currentTarget.value as GlossaryKind })
+                    }
+                  >
+                    {GLOSSARY_KINDS.map((kind) => (
+                      <NativeSelectOption key={kind} value={kind}>
+                        {t(`series.glossary.kinds.${kind}`)}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+
+                <div className='flex items-center gap-1'>
+                  <Input
+                    value={entry.note}
+                    aria-label={t('series.glossary.note')}
+                    placeholder={t('series.glossary.notePlaceholder')}
+                    className='h-7 min-w-0 flex-1 text-[11px]'
+                    onChange={(event) => update(index, { note: event.currentTarget.value })}
+                  />
+                  {entry.source_origin !== 'user' && (
+                    <span className='shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[9px] leading-4 text-muted-foreground'>
+                      {t(`series.glossary.origin.${entry.source_origin}`)}
+                    </span>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

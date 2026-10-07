@@ -483,8 +483,19 @@
       "label": "Webtoon ad bands",
       "tail": "Tail (from bottom)"
     },
+    "actions": {
+      "description": "Add chapters, fetch the ones this series is missing, and run a stage over a range of chapters.",
+      "run": "Process",
+      "sources": "Chapter sources",
+      "title": "Import and process"
+    },
     "backToShelf": "Back to the shelf",
     "chapterCount": "{{count}} chapters",
+    "chapters": {
+      "search": "Search chapters",
+      "searchEmpty": "No chapter matches this search.",
+      "title": "Chapters"
+    },
     "context": {
       "hint": "Translating a page also sends the pages before it as already-translated examples, so wording stays consistent. The window spans chapters: the first page of a chapter reaches back into the previous one, and each page after that gives up one page of the previous chapter for one of its own. A page still untranslated keeps its slot but contributes nothing. More pages cost more tokens; at most {{max}}.",
       "pages": "Context pages",

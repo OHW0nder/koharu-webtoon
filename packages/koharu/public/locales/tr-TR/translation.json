@@ -483,8 +483,19 @@
       "label": "Webtoon reklam bantları",
       "tail": "Son (alttan)"
     },
+    "actions": {
+      "description": "Bölüm ekleyin, eksik olanları getirin ve bir bölüm aralığında bir aşama çalıştırın.",
+      "run": "İşle",
+      "sources": "Bölüm kaynakları",
+      "title": "İçe aktarma ve işleme"
+    },
     "backToShelf": "Raf'a dön",
     "chapterCount": "{{count}} bölüm",
+    "chapters": {
+      "search": "Bölümlerde ara",
+      "searchEmpty": "Aramayla eşleşen bölüm yok.",
+      "title": "Bölümler"
+    },
     "context": {
       "hint": "Bir sayfayı çevirirken önceki sayfaların çevrilmiş örnekleri de gönderilir, böylece ifade tutarlı kalır. Pencere bölüm sınırının üzerinden devam eder: bir bölümün ilk sayfası bir önceki bölümün sonuna kadar geri bakar, sonraki her sayfada önceki bölümden bir sayfa çıkar ve yerine bu bölümün bir sayfası gelir. Henüz çevrilmemiş bir sayfa yerini korur ama hiçbir katkı yapmaz. Daha fazla sayfa daha fazla jeton harcar; en fazla {{max}}.",
       "pages": "Bağlam penceresi sayfası",

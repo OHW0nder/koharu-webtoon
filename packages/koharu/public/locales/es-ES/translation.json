@@ -483,8 +483,19 @@
       "label": "Bandas de anuncios del webtoon",
       "tail": "Pie (desde abajo)"
     },
+    "actions": {
+      "description": "Añade capítulos, descarga los que faltan y ejecuta una fase sobre un rango de capítulos.",
+      "run": "Procesar",
+      "sources": "Origen de los capítulos",
+      "title": "Importación y procesamiento"
+    },
     "backToShelf": "Volver a la estantería",
     "chapterCount": "{{count}} capítulos",
+    "chapters": {
+      "search": "Buscar capítulos",
+      "searchEmpty": "Ningún capítulo coincide con la búsqueda.",
+      "title": "Capítulos"
+    },
     "context": {
       "hint": "Al traducir una página también se envían las páginas anteriores como ejemplos ya traducidos, para que el wording no cambie. La ventana cruza el cambio de capítulo: la primera página de un capítulo retrocede hasta el final del anterior, y cada página siguiente cambia una página del capítulo anterior por una del actual. Una página sin traducción conserva su hueco pero no aporta nada. Más páginas cuestan más tokens; el máximo es {{max}}.",
       "pages": "Páginas de contexto",

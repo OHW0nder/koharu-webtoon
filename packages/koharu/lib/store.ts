@@ -31,6 +31,17 @@ export function isBrushTool(tool: CanvasTool): boolean {
   return tool === 'draw' || tool === 'eraser' || tool === 'remove'
 }
 
+/** Whether any job is running right now.
+ *
+ *  A running batch walks its chapters one at a time by replacing the single project slot, so
+ *  anything that writes the series index or removes a chapter from under it would collide. The
+ *  series page reads this in every panel rather than passing one `busy` flag down: each panel knows
+ *  which of its own actions are in flight, and this is the part none of them can see. */
+export function useJobsRunning(): boolean {
+  const jobs = useKoharuStore((state) => state.jobs)
+  return Object.values(jobs).some((job) => job.state === 'running')
+}
+
 export interface CanvasBrush {
   diameter: number
   color: string
