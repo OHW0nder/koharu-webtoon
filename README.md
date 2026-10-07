@@ -2,6 +2,8 @@
 
 <p align="center">ML-powered manga translator, written in <b>Rust</b>.</p>
 
+<a id="fork-notice"></a>
+
 > [!WARNING]
 > **本仓库是个人自用的二次开发分支，不是 Koharu 官方仓库。**
 >
@@ -249,3 +251,9 @@ Copyright 2025-2026 Mayo Takanashi and Koharu contributors.
 
 Koharu is dual-licensed under the [MIT License](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+**This fork is distributed under the [MIT License](LICENSE-MIT)** — picking that option out of
+upstream's dual licensing instead of Apache-2.0. Apache-2.0 asks that every modified file carry a
+notice saying it was changed; choosing MIT leaves that obligation out of scope, so no per-file
+markers are added to the sources here. Upstream's copyright notice is unchanged, and the fork's
+divergences are described in the [fork notice](#fork-notice) at the top of this file.
