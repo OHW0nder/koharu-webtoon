@@ -184,7 +184,7 @@ impl TextRenderer {
                 entity: descriptor.entity,
                 source,
             })?;
-        let automatic_maximum = || automatic_maximum(descriptor, bounds, is_bubble_text);
+        let automatic_maximum = || automatic_maximum(descriptor, bounds);
         let maximum = if descriptor.auto_fit {
             automatic_maximum()
         } else {
@@ -319,19 +319,14 @@ impl TextRenderer {
     }
 }
 
-fn automatic_maximum(
-    descriptor: &TextNodeDescriptor,
-    bounds: LayoutBox,
-    is_bubble_text: bool,
-) -> f32 {
-    if is_bubble_text {
-        if descriptor.writing_mode.is_vertical() {
-            bounds.height
-        } else {
-            bounds.width
-        }
+/// The largest size a fit may search up to. The inline axis of the authored bounds is the
+/// only honest ceiling: a fixed number leaves short lines stranded in large boxes and lets
+/// long ones overflow boxes that had room to spare.
+fn automatic_maximum(descriptor: &TextNodeDescriptor, bounds: LayoutBox) -> f32 {
+    if descriptor.writing_mode.is_vertical() {
+        bounds.height
     } else {
-        24.0
+        bounds.width
     }
 }
 
@@ -445,7 +440,7 @@ mod tests {
     use crate::fonts::FontSystem;
 
     #[test]
-    fn automatic_size_preserves_free_text_default_and_balloon_extent() {
+    fn automatic_size_follows_the_authored_inline_extent() {
         let descriptor = TextNodeDescriptor {
             entity: EntityId::new(),
             text: "Hi".to_owned(),
@@ -477,8 +472,12 @@ mod tests {
             height: 120.0,
         };
 
-        assert_eq!(automatic_maximum(&descriptor, bounds, false), 24.0);
-        assert_eq!(automatic_maximum(&descriptor, bounds, true), 240.0);
+        assert_eq!(automatic_maximum(&descriptor, bounds), 240.0);
+        let vertical = TextNodeDescriptor {
+            writing_mode: WritingMode::VerticalRl,
+            ..descriptor
+        };
+        assert_eq!(automatic_maximum(&vertical, bounds), 120.0);
     }
 
     #[test]

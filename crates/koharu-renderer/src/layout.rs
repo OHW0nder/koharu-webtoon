@@ -27,6 +27,18 @@ const LINE_BREAK_HYPHEN_PENALTY: f32 = 2_000.0;
 const LINE_BREAK_OVERFLOW_MULTIPLIER: f32 = 10_000.0;
 const COMIC_LINE_OVERFLOW_PENALTY: f32 = 1_000_000.0;
 const COMIC_MAX_LINES: usize = 64;
+/// Block-axis step used to walk a balloon's outline toward its speech body, in pixels.
+const BODY_SCAN_STEP: f32 = 3.0;
+/// Bisections used to land a body edge on the outline instead of on the scan grid.
+const BODY_EDGE_REFINEMENTS: u32 = 14;
+/// A shorter setting has to keep this share of the largest fitting size to be preferred.
+/// Lettering reads as one breath on fewer lines, and a quarter of the size is a trade the
+/// reader accepts; below that the smaller setting is a different, worse lettering.
+const FEWER_LINE_SIZE_SHARE: f32 = 0.75;
+/// Share of the box the block axis must already fill before auto-fit leaves the line count
+/// alone. A setting that fills its balloon is the largest lettering that balloon can show, so
+/// trading size for fewer lines there would only leave the balloon looking empty.
+const BLOCK_FILL_SHARE: f32 = 0.8;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HyphenationPolicy {
@@ -388,54 +400,16 @@ impl<'a> TextLayout<'a> {
             // A balloon's usable width changes when the text reflows to a different
             // number of lines, so a smaller font can fail even though a larger one
             // fits. Search from largest to smallest instead of assuming monotonicity.
-            if self.hyphenation_policy == HyphenationPolicy::LastResort {
-                let mut unhyphenated = self.clone();
-                unhyphenated.hyphenation_policy = HyphenationPolicy::Disabled;
-                let clean = largest_fitting_font_size(
-                    minimum,
-                    maximum,
-                    |size| unhyphenated.run_with_size(text, size),
-                    fits,
-                )?;
-                // Avoiding a word break is no longer useful once it pins the text to
-                // the configured readability floor. Compare raster-size buckets so
-                // hyphenation must recover a visible pixel, not a tuned percentage.
-                if clean
-                    .as_ref()
-                    .is_some_and(|best| best.font_size.floor() > minimum.floor())
-                {
-                    return Ok(clean.unwrap());
-                }
-                let hyphenated = largest_fitting_font_size(
-                    minimum,
-                    maximum,
-                    |size| self.run_with_size(text, size),
-                    fits,
-                )?;
-                match (clean, hyphenated) {
-                    (Some(clean), Some(hyphenated))
-                        if hyphenated.font_size.floor() > clean.font_size.floor() =>
-                    {
-                        return Ok(hyphenated);
-                    }
-                    (Some(clean), _) => return Ok(clean),
-                    (None, Some(hyphenated)) => return Ok(hyphenated),
-                    (None, None) => {}
-                }
-            } else if let Some(best) = largest_fitting_font_size(
-                minimum,
-                maximum,
-                |size| self.run_with_size(text, size),
-                fits,
-            )? {
-                return Ok(best);
-            }
-            return self.run_with_size(text, minimum);
+            let incumbent = self.largest_balloon_layout(text, minimum, maximum, &fits);
+            return Ok(match incumbent {
+                Some(best) => self.prefer_fewer_lines(text, best, minimum, &fits),
+                None => self.run_with_size(text, minimum)?,
+            });
         }
 
         let maximum_layout = self.run_with_size(text, maximum)?;
         if fits(&maximum_layout) {
-            return Ok(maximum_layout);
+            return Ok(self.prefer_fewer_lines(text, maximum_layout, minimum, &fits));
         }
 
         let mut best = self.run_with_size(text, minimum)?;
@@ -457,7 +431,121 @@ impl<'a> TextLayout<'a> {
                 high = size;
             }
         }
-        Ok(best)
+        Ok(self.prefer_fewer_lines(text, best, minimum, &fits))
+    }
+
+    /// The largest layout a balloon accepts, keeping clean words ahead of hyphenation.
+    fn largest_balloon_layout(
+        &self,
+        text: &str,
+        minimum: f32,
+        maximum: f32,
+        fits: &impl Fn(&LayoutRun<'_>) -> bool,
+    ) -> Option<LayoutRun<'a>> {
+        if self.hyphenation_policy != HyphenationPolicy::LastResort {
+            return largest_fitting_font_size(
+                minimum,
+                maximum,
+                |size| self.run_with_size(text, size),
+                fits,
+            )
+            .ok()
+            .flatten();
+        }
+
+        let mut unhyphenated = self.clone();
+        unhyphenated.hyphenation_policy = HyphenationPolicy::Disabled;
+        let clean = largest_fitting_font_size(
+            minimum,
+            maximum,
+            |size| unhyphenated.run_with_size(text, size),
+            fits,
+        )
+        .ok()
+        .flatten();
+        // Avoiding a word break is no longer useful once it pins the text to
+        // the configured readability floor. Compare raster-size buckets so
+        // hyphenation must recover a visible pixel, not a tuned percentage.
+        if clean
+            .as_ref()
+            .is_some_and(|best| best.font_size.floor() > minimum.floor())
+        {
+            return clean;
+        }
+        let hyphenated = largest_fitting_font_size(
+            minimum,
+            maximum,
+            |size| self.run_with_size(text, size),
+            fits,
+        )
+        .ok()
+        .flatten();
+        match (clean, hyphenated) {
+            (Some(clean), Some(hyphenated))
+                if hyphenated.font_size.floor() > clean.font_size.floor() =>
+            {
+                Some(hyphenated)
+            }
+            (Some(clean), _) => Some(clean),
+            (None, Some(hyphenated)) => Some(hyphenated),
+            (None, None) => None,
+        }
+    }
+
+    /// Trades a little size for fewer lines.
+    ///
+    /// Maximizing size alone breaks the reading of short lines: folding `等、等等……♡` onto two
+    /// lines frees the inline measure, which buys a font large enough to outrank the one-line
+    /// setting that fits with room to spare. Both fit, so size alone cannot separate them —
+    /// line count has to be the primary key and size the tiebreaker.
+    fn prefer_fewer_lines(
+        &self,
+        text: &str,
+        incumbent: LayoutRun<'a>,
+        minimum: f32,
+        fits: &impl Fn(&LayoutRun<'_>) -> bool,
+    ) -> LayoutRun<'a> {
+        if incumbent.lines.len() <= 1 {
+            return incumbent;
+        }
+        // A setting that already fills its balloon along the block axis is the largest
+        // lettering that balloon can show. Shrinking it to save a line would leave the balloon
+        // visibly empty, which is worse than the extra line it was trying to remove.
+        let (extent, available) = if self.writing_mode.is_vertical() {
+            (incumbent.width, self.max_width)
+        } else {
+            (incumbent.height, self.max_height)
+        };
+        if let Some(available) = available
+            && extent >= available * BLOCK_FILL_SHARE
+        {
+            return incumbent;
+        }
+        let floor = incumbent.font_size * FEWER_LINE_SIZE_SHARE;
+        let mut best: Option<LayoutRun<'a>> = None;
+        for lines in 1..incumbent.lines.len() {
+            let Some(candidate) = largest_fitting_font_size(
+                minimum,
+                incumbent.font_size,
+                |size| self.run_with_size(text, size),
+                |layout| fits(layout) && layout.lines.len() <= lines,
+            )
+            .ok()
+            .flatten()
+            else {
+                continue;
+            };
+            if candidate.font_size < floor {
+                continue;
+            }
+            if best
+                .as_ref()
+                .is_none_or(|current: &LayoutRun<'a>| candidate.lines.len() < current.lines.len())
+            {
+                best = Some(candidate);
+            }
+        }
+        best.unwrap_or(incumbent)
     }
 
     fn run_with_size(&self, text: &str, font_size: f32) -> Result<LayoutRun<'a>> {
@@ -1795,9 +1883,18 @@ impl ComicBalloon {
         if inline_radius <= 0.0 {
             return Vec::new();
         }
-        let Some(block_origin) =
-            self.centered_block_origin(writing_mode, block_extent, block_air, block_size)
-        else {
+        let Some(block_origin) = self.centered_block_origin(
+            self.body_block_range(
+                writing_mode,
+                block_extent,
+                inline_extent,
+                block_air,
+                inline_air,
+            ),
+            block_extent,
+            block_air,
+            block_size,
+        ) else {
             return Vec::new();
         };
         self.line_profiles_at_origin(
@@ -1894,25 +1991,112 @@ impl ComicBalloon {
             .collect()
     }
 
+    /// Locates a balloon's speech body along the block axis and centers the block in it.
+    ///
+    /// The inline axis already measures every line against the real outline, so the block
+    /// The block positions a balloon can hold a full line in.
+///
+/// The inline axis measures every line against the real outline, so the block axis has to
+/// use the same span rather than the outline's bounding box: a tail or a spike enlarges that
+/// box while holding no glyphs, which would otherwise push the text toward the narrow end.
+/// Half the balloon's own width separates the two — a speech body always reaches it, a tail
+/// never does — and each edge is bisected so it lands on the outline, not on the scan grid.
+#[allow(clippy::too_many_arguments)]
+fn body_block_range(
+    &self,
+    writing_mode: WritingMode,
+    block_extent: f32,
+    inline_extent: f32,
+    block_air: f32,
+    inline_air: f32,
+) -> (f32, f32) {
+    let span_at = |block: f32| {
+        self.inline_span(
+            writing_mode,
+            block,
+            block_extent,
+            inline_extent,
+            block_air,
+            inline_air,
+        )
+        .map_or(0.0, |(left, right)| (right - left).max(0.0))
+    };
+    let body = (inline_extent * 0.5 - inline_air).max(0.0);
+
+    let (domain_low, domain_high) = if self.contour.len() >= 3 {
+        self.contour.iter().fold(
+            (f32::INFINITY, f32::NEG_INFINITY),
+            |(minimum, maximum), &(x, y)| {
+                let block = if writing_mode.is_vertical() { x } else { y };
+                (minimum.min(block), maximum.max(block))
+            },
+        )
+    } else {
+        (block_air, block_extent - block_air)
+    };
+    if domain_high < domain_low {
+        return (block_air, block_air);
+    }
+
+    let edge = |outside: f32, mut inside: f32| {
+        let mut outside = outside;
+        for _ in 0..BODY_EDGE_REFINEMENTS {
+            let middle = (outside + inside) * 0.5;
+            if span_at(middle) >= body {
+                inside = middle;
+            } else {
+                outside = middle;
+            }
+        }
+        inside
+    };
+
+    let mut low = domain_low;
+    while low < domain_high && span_at(low) < body {
+        low = (low + BODY_SCAN_STEP).min(domain_high);
+    }
+    let first = if low > domain_low && span_at(low) >= body {
+        edge(low - BODY_SCAN_STEP, low)
+    } else {
+        low
+    };
+
+    let mut high = domain_high;
+    while high > domain_low && span_at(high) < body {
+        high = (high - BODY_SCAN_STEP).max(domain_low);
+    }
+    let last = if high < domain_high && span_at(high) >= body {
+        edge(high + BODY_SCAN_STEP, high)
+    } else {
+        high
+    };
+
+    (first.min(last), last)
+}
+
+    /// The block span a balloon offers before it is asked to hold a block of `block_size`.
     fn centered_block_origin(
         &self,
-        writing_mode: WritingMode,
+        body: (f32, f32),
         block_extent: f32,
         block_air: f32,
         block_size: f32,
     ) -> Option<f32> {
-        let mut first = block_air;
-        let mut last = block_extent - block_air;
-        if self.contour.len() >= 3 {
-            let (minimum, maximum) = self.contour.iter().fold(
-                (f32::INFINITY, f32::NEG_INFINITY),
-                |(minimum, maximum), &(x, y)| {
-                    let block = if writing_mode.is_vertical() { x } else { y };
-                    (minimum.min(block), maximum.max(block))
-                },
-            );
-            first = first.max(minimum + block_air);
-            last = last.min(maximum - block_air);
+        let lower = block_air.min(block_extent * 0.5);
+        let upper = (block_extent - block_air).max(lower);
+        let (mut first, mut last) = body;
+        if first < lower || last > upper {
+            first = first.clamp(lower, upper);
+            last = last.clamp(lower, upper);
+        }
+
+        // A block wider than the speech body still has to land somewhere. Widening the span
+        // around its own center keeps a smoothly tapered outline behaving like the measured
+        // box it replaces, because an ellipse reaches no distinct body at all.
+        if last - first < block_size {
+            let center = (first + last) * 0.5;
+            first = (center - block_size * 0.5).max(lower);
+            last = (center + block_size * 0.5).min(upper);
         }
         ((last - first) + f32::EPSILON >= block_size)
             .then_some(first + (last - first - block_size) * 0.5)
@@ -2734,6 +2918,109 @@ mod tests {
 
         let leading = layout.lines[1].baseline.1 - layout.lines[0].baseline.1;
         assert_approx_eq(leading, font_size * 1.2);
+        Ok(())
+    }
+
+    /// A short line that could sit on one line stays on one line, even though folding it
+    /// frees enough measure to buy a larger font.
+    #[test]
+    fn auto_fit_prefers_fewer_lines_over_a_larger_font() -> anyhow::Result<()> {
+        let font = any_system_font();
+        // Wide and shallow: the fold buys real size here, which is exactly the case where
+        // maximizing size on its own picks two lines over the one the reader wants.
+        let (width, height) = (220.0_f32, 130.0_f32);
+        let layout = TextLayout::new(&font)
+            .with_max_font_size(width)
+            .with_min_font_size(9.0)
+            .with_line_height(1.2)
+            .with_alignment(TextAlign::Center)
+            .with_max_width(width)
+            .with_max_height(height)
+            .with_comic_balloon(
+                width,
+                height,
+                vec![(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)],
+                4.0,
+            )
+            .run("等、等等……♡")?;
+
+        assert_eq!(layout.lines.len(), 1, "the phrase fits on a single line");
+        Ok(())
+    }
+
+    /// A line that only reaches one line by collapsing the font keeps its extra lines.
+    #[test]
+    fn auto_fit_keeps_extra_lines_rather_than_shrinking_below_the_share() -> anyhow::Result<()> {
+        let font = any_system_font();
+        let (width, height) = (200.0_f32, 120.0_f32);
+        let layout = TextLayout::new(&font)
+            .with_max_font_size(width)
+            .with_min_font_size(9.0)
+            .with_line_height(1.2)
+            .with_alignment(TextAlign::Center)
+            .with_max_width(width)
+            .with_max_height(height)
+            .with_comic_balloon(
+                width,
+                height,
+                vec![(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)],
+                4.0,
+            )
+            .run("也要我帮你挑吗？")?;
+
+        assert!(
+            layout.lines.len() > 1,
+            "a third of the size is not worth one line: {}",
+            layout.font_size
+        );
+        Ok(())
+    }
+
+    /// A balloon outline can carry a tail that enlarges its bounding box without
+    /// belonging to the speech body. Text must center on the body, not on that box.
+    #[test]
+    fn comic_layout_centers_on_the_balloon_body_not_its_bounding_box() -> anyhow::Result<()> {
+        let font = any_system_font();
+        let font_size = 20.0;
+        let contour = vec![
+            (20.0, 80.0),
+            (35.0, 32.0),
+            (70.0, 6.0),
+            (100.0, 0.0),
+            (130.0, 6.0),
+            (165.0, 32.0),
+            (180.0, 80.0),
+            (165.0, 128.0),
+            (130.0, 154.0),
+            (108.0, 159.0),
+            (100.0, 215.0),
+            (92.0, 159.0),
+            (70.0, 154.0),
+            (35.0, 128.0),
+        ];
+        let body_center_y = 80.0;
+        let balloon_height = 215.0;
+        let layout = TextLayout::new(&font)
+            .with_font_size(font_size)
+            .with_line_height(1.2)
+            .with_alignment(TextAlign::Center)
+            .with_max_width(200.0)
+            .with_max_height(balloon_height)
+            .with_comic_balloon(200.0, balloon_height, contour, 4.0);
+
+        let run = layout.run("挑吗")?;
+        assert_eq!(run.lines.len(), 1, "the probe phrase must stay on one line");
+
+        let (_, min_y, _, max_y) = layout
+            .ink_bounds(run.font_size, &run.lines)
+            .expect("ink bounds");
+        let placed = (balloon_height - run.height) * 0.5 + run.placement_offset_y;
+        let center = placed + (min_y + max_y) * 0.5;
+
+        assert!(
+            (center - body_center_y).abs() <= 2.0,
+            "ink center {center} should sit on the balloon body center {body_center_y}"
+        );
         Ok(())
     }
 
