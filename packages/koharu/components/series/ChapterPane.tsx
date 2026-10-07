@@ -5,7 +5,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { call } from '@/lib/backend'
+import { ChapterRangeFields } from '@/components/series/ChapterRangeFields'
 import { useDeleteSeriesChapter, useExportSeriesChapters, useSeriesDetail } from '@/lib/queries'
+import { chapterRange, chapterRef, chaptersInRange } from '@/lib/series-range'
 import { useJobsRunning, useKoharuStore } from '@/lib/store'
 import {
   commands,
@@ -51,6 +53,8 @@ export function ChapterPane({ series }: { series: string }) {
   const { deleteChapter, deletingChapter } = useDeleteSeriesChapter(series)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<string[]>([])
+  const [rangeFrom, setRangeFrom] = useState('')
+  const [rangeTo, setRangeTo] = useState('')
 
   // Held through a memo so the selection and the filter below only run when the index or the query
   // actually changed: the `??` fallback allocates a fresh array on every render otherwise.
@@ -69,6 +73,25 @@ export function ChapterPane({ series }: { series: string }) {
         `#${chapter.seq}` === needle,
     )
   }, [chapters, query])
+
+  // A run of chapters is addressed the way the list numbers them rather than by ticking each one:
+  // a shelf of a hundred chapters is not something anyone should select by hand. Naming a span adds
+  // it to the selection, so the export above stays the only place that decides what leaves the app.
+  const range = useMemo(() => chapterRange(rangeFrom, rangeTo), [rangeFrom, rangeTo])
+  const rangeTargets = useMemo(
+    () => (range ? chaptersInRange(chapters, series, range) : []),
+    [chapters, range, series],
+  )
+  const rangeStatus = !range
+    ? t('series.range.selectHint')
+    : rangeTargets.length === 0
+      ? t('series.range.empty')
+      : t('series.range.selectCount', { count: rangeTargets.length })
+
+  const pickRange = () =>
+    setSelected((current) => [
+      ...new Set([...current, ...rangeTargets.map((reference) => reference.chapter)]),
+    ])
 
   const chosen = useMemo(
     () => chapters.filter((chapter) => selected.includes(chapter.chapter)),
@@ -104,6 +127,32 @@ export function ChapterPane({ series }: { series: string }) {
         </span>
       </div>
 
+      <form
+        className='flex shrink-0 items-center gap-1.5 border-b border-border/40 px-3 py-1.5'
+        onSubmit={(event) => {
+          event.preventDefault()
+          pickRange()
+        }}
+      >
+        <ChapterRangeFields
+          from={rangeFrom}
+          to={rangeTo}
+          onFrom={setRangeFrom}
+          onTo={setRangeTo}
+          disabled={busy}
+        />
+        <Button
+          type='submit'
+          size='sm'
+          variant='ghost'
+          disabled={busy || rangeTargets.length === 0}
+          className='h-7 px-2 text-[10px]'
+        >
+          {t('series.range.select')}
+        </Button>
+        <span className='truncate text-[9px] text-muted-foreground'>{rangeStatus}</span>
+      </form>
+
       <div className='flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-1.5'>
         <SelectAll
           allPicked={allPicked}
@@ -134,7 +183,7 @@ export function ChapterPane({ series }: { series: string }) {
             className='h-7 gap-1.5 text-[10px]'
             onClick={() =>
               void exportChapters({
-                chapters: chosen.map((chapter) => referenceOf(series, chapter)),
+                chapters: chosen.map((chapter) => chapterRef(series, chapter)),
               }).catch(() => undefined)
             }
           >
@@ -197,7 +246,7 @@ export function ChapterPane({ series }: { series: string }) {
                 picked={selected.includes(chapter.chapter)}
                 disabled={busy}
                 onToggle={() => toggle(chapter.chapter)}
-                onDelete={() => deleteChapter(referenceOf(series, chapter))}
+                onDelete={() => deleteChapter(chapterRef(series, chapter))}
                 onOpen={async (reference) => {
                   await call(commands.openChapter, reference)
                   showChapter({ seriesId: series, reference })
@@ -209,12 +258,6 @@ export function ChapterPane({ series }: { series: string }) {
       </ScrollArea>
     </div>
   )
-}
-
-/** A chapter's address on disk. The chapter directory holds nothing but a sequence number, so the
- *  series directory it sits in is what makes a reference addressable. */
-function referenceOf(series: string, chapter: { chapter: string }): ChapterRef {
-  return { series, chapter: chapter.chapter }
 }
 
 /** Select-all over whatever the filter left visible. The mixed state is set through the DOM property
@@ -275,7 +318,7 @@ function ChapterRow({
     if (opening) return
     setOpening(true)
     try {
-      await onOpen(referenceOf(series, chapter))
+      await onOpen(chapterRef(series, chapter))
     } finally {
       setOpening(false)
     }
@@ -381,7 +424,7 @@ function DeleteChaptersDialog({
   const confirm = async () => {
     setWorking(true)
     try {
-      await onConfirm(chapters.map((chapter) => referenceOf(series, chapter)))
+      await onConfirm(chapters.map((chapter) => chapterRef(series, chapter)))
       setOpen(false)
     } finally {
       setWorking(false)

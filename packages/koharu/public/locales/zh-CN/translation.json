@@ -580,6 +580,9 @@
       "empty": "这个区间里没有章节。",
       "from": "起始章节号",
       "hint": "结束留空则只处理起始的那一章。",
+      "select": "选中区间",
+      "selectCount": "选中 {{count}} 章",
+      "selectHint": "结束留空则只选起始的那一章。",
       "to": "结束章节号"
     },
     "deleteChapter": "删除 {{name}}",

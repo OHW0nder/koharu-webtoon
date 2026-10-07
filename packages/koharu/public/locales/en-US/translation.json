@@ -580,6 +580,9 @@
       "empty": "No chapter carries that number.",
       "from": "First chapter number",
       "hint": "Leave the end empty to run only the chapter the start names.",
+      "select": "Select range",
+      "selectCount": "Selects {{count}} chapters",
+      "selectHint": "Leave the end empty to select only the chapter the start names.",
       "to": "Last chapter number"
     },
     "deleteChapter": "Delete {{name}}",

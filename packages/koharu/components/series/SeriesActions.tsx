@@ -5,8 +5,10 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AdBandField } from '@/components/series/AdBandField'
+import { ChapterRangeFields } from '@/components/series/ChapterRangeFields'
 import { SourceUpdatePopover } from '@/components/series/SourceUpdatePopover'
 import { useImportSeriesChapter, useProcessSeriesChapters, useSeriesDetail } from '@/lib/queries'
+import { chapterRange, chaptersInRange } from '@/lib/series-range'
 import { useJobsRunning } from '@/lib/store'
 import {
   commands,
@@ -23,7 +25,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@koharu/ui/components/dropdown-menu'
-import { Input } from '@koharu/ui/components/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@koharu/ui/components/popover'
 import { Switch } from '@koharu/ui/components/switch'
 
@@ -152,20 +153,12 @@ function ProcessRange({
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
 
-  const range = useMemo(() => {
-    const start = Number.parseInt(from, 10)
-    if (!Number.isFinite(start)) return null
-    const end = to.trim() === '' ? start : Number.parseInt(to, 10)
-    if (!Number.isFinite(end)) return null
-    return { low: Math.min(start, end), high: Math.max(start, end) }
-  }, [from, to])
+  const range = useMemo(() => chapterRange(from, to), [from, to])
 
-  const targets = useMemo(() => {
-    if (!range) return []
-    return chapters
-      .filter((chapter) => chapter.seq >= range.low && chapter.seq <= range.high)
-      .map((chapter) => ({ series, chapter: chapter.chapter }))
-  }, [chapters, range, series])
+  const targets = useMemo(
+    () => (range ? chaptersInRange(chapters, series, range) : []),
+    [chapters, range, series],
+  )
 
   const status = !range
     ? t('series.range.hint')
@@ -173,31 +166,15 @@ function ProcessRange({
       ? t('series.range.empty')
       : t('series.range.count', { count: targets.length })
 
-  const field = (value: string, onChange: (next: string) => void, label: string) => (
-    <Input
-      type='number'
-      min={1}
-      step={1}
-      inputMode='numeric'
-      value={value}
-      disabled={busy}
-      placeholder='#'
-      aria-label={label}
-      // Chapter numbers reach three digits, and the native number spinner claims most of the
-      // field's content width, which pushed the last digit out of sight. Nothing here is dialled,
-      // so the spinner is dropped rather than left to compete with the number.
-      className='h-7 w-14 shrink-0 [appearance:textfield] text-[11px] tabular-nums [&::-moz-number-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
-      onChange={(event) => onChange(event.currentTarget.value)}
-    />
-  )
-
   return (
-    <div className='grid gap-1.5'>
-      <div className='flex items-center gap-1.5'>
-        {field(from, setFrom, t('series.range.from'))}
-        <span className='text-[10px] text-muted-foreground'>–</span>
-        {field(to, setTo, t('series.range.to'))}
-      </div>
+<div className='grid gap-1.5'>
+      <ChapterRangeFields
+        from={from}
+        to={to}
+        onFrom={setFrom}
+        onTo={setTo}
+        disabled={busy}
+      />
       <p className='text-[9px] leading-4 text-muted-foreground'>{status}</p>
       <DropdownMenu>
         <DropdownMenuTrigger
