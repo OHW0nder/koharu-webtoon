@@ -4,10 +4,11 @@ use std::{
     io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, bail};
-use image::{DynamicImage, ImageFormat, ImageReader};
+use image::{DynamicImage, ImageFormat, ImageReader, ImageBuffer, Rgb};
 use koharu_ml::webtoon::{RowStat, SliceParams, plan_slices, row_profile};
 use koharu_scene::{
     AssetInput, AssetMetadata, AssetRole, At, Commit, PageDraft,
@@ -23,11 +24,11 @@ mod pdf;
 mod rar;
 mod zip;
 
-/// JPEG quality for a band re-encoded from a lossy source.
+/// JPEG quality for an encoded band.
 ///
-/// A band is re-encoded rather than losslessly cropped because the source pixels cannot be
-/// copied without re-running a lossless codec over them anyway; 92 keeps grain and thin
-/// strokes, which is what the detector reads, while staying far smaller than PNG.
+/// A band is re-encoded rather than copied out of the source because the source pixels cannot be
+/// handed over without re-running a codec over them anyway; 92 keeps grain and thin strokes, which
+/// is what the detector reads, while staying far smaller than PNG.
 const BAND_JPEG_QUALITY: u8 = 92;
 
 #[derive(Clone, Copy, EnumIter, EnumMessage, EnumString)]
@@ -441,6 +442,7 @@ fn cut_one(page: Page, params: &SliceParams, ad: AdBands) -> CutOutcome {
     if middle < params.min_height {
         return keep_whole(page, ad, AdBandSkip::TooShort);
     }
+    let started = Instant::now();
     let image = match image::load_from_memory_with_format(&page.bytes, page.format) {
         Ok(image) => image,
         Err(error) => {
@@ -451,7 +453,24 @@ fn cut_one(page: Page, params: &SliceParams, ad: AdBands) -> CutOutcome {
             return CutOutcome::Imported(Imported::Page(page));
         }
     };
-    let profile = row_profile(&image.to_luma8());
+    let decode = started.elapsed();
+    // 灰度化与行剖面各自都是一整趟 O(宽×高) 的遍历，合在一起计时就没法判断该优化哪一个，所以
+    // 两者在这里就被拆成两段。它们仍然是同一趟工作的一部分，顺序也没变。
+    let started = Instant::now();
+    let luma = image.to_luma8();
+    let to_luma = started.elapsed();
+    let started = Instant::now();
+    let profile = row_profile(&luma);
+    let profiling = started.elapsed();
+    tracing::info!(
+        page = %page.name,
+        width = page.width,
+        height = page.height,
+        ?decode,
+        ?to_luma,
+        ?profiling,
+        "read an imported image for slicing"
+    );
     // 广告带永远不从像素里裁掉：剖面被裁成中段，切点读像素时再加上 `head`，因此每一条切片仍然逐
     // 像素来自原图。
     let Some(rows) = middle_rows(&profile, head, head + middle) else {
@@ -535,28 +554,43 @@ fn band(
     head: u32,
     plan: &koharu_ml::webtoon::SlicePlan,
 ) -> Result<Vec<Band>> {
-    let (format, encoder): (ImageFormat, BandEncoder) = match page.format {
-        ImageFormat::Png => (ImageFormat::Png, BandEncoder::Lossless),
-        _ => (ImageFormat::Jpeg, BandEncoder::Jpeg),
-    };
-    let mut bands = Vec::with_capacity(plan.page_count());
-    for (index, (y_offset, height)) in plan.page_ranges().into_iter().enumerate() {
-        // 规划器的行号从中段顶端起算；裁剪与记录的偏移都是源图行号，所以首条广告带恰好加回一次。
-        let y_offset = head + y_offset;
-        let cropped = image.crop_imm(0, y_offset, plan.width, height);
-        bands.push(Band {
-            y_offset,
-            page: Page {
-                // Strip pages are unnamed parts of one file, so a positional name is the only
-                // label that stays meaningful without inventing chapter numbering.
-                name: format!("{} {:02}", strip_stem(&page.name), index + 1),
-                bytes: encode(&cropped, encoder)?,
-                format,
-                width: plan.width,
-                height,
-            },
-        });
-    }
+    // 切片一律是 JPEG，与源格式无关：未切割的源图已经完整存在项目里，切片是派生数据，所以没有
+    // 理由为无损源再付一次无损重压缩的代价。
+    let format = ImageFormat::Jpeg;
+    // 切片之间没有任何依赖，所以整批并行。一张长条切出七八片是常态，单线程跑等于把核扔掉，
+    // 而"一章有几张长图"并不是能依赖的前提——一张源图也必须吃满核。
+    let started = Instant::now();
+    let bands = plan
+        .page_ranges()
+        .into_par_iter()
+        .enumerate()
+        .map(|(index, (y_offset, height))| {
+            // 规划器的行号从中段顶端起算；裁剪与记录的偏移都是源图行号，所以首条广告带恰好加回一次。
+            let y_offset = head + y_offset;
+            let cropped = image.crop_imm(0, y_offset, plan.width, height);
+            Ok(Band {
+                y_offset,
+                page: Page {
+                    // Strip pages are unnamed parts of one file, so a positional name is the only
+                    // label that stays meaningful without inventing chapter numbering.
+                    name: format!("{} {:02}", strip_stem(&page.name), index + 1),
+                    bytes: encode(&cropped)?,
+                    format,
+                    width: plan.width,
+                    height,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let elapsed = started.elapsed();
+    let encoded: usize = bands.iter().map(|band| band.page.bytes.len()).sum();
+    tracing::info!(
+        page = %page.name,
+        bands = bands.len(),
+        ?elapsed,
+        encoded_bytes = encoded,
+        "cut an imported webtoon strip into pages"
+    );
     Ok(bands)
 }
 
@@ -564,23 +598,41 @@ fn strip_stem(name: &str) -> &str {
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }
 
-#[derive(Clone, Copy)]
-enum BandEncoder {
-    /// A PNG source is cut without a second lossy generation.
-    Lossless,
-    Jpeg,
-}
-
-fn encode(image: &DynamicImage, encoder: BandEncoder) -> Result<Arc<[u8]>> {
-    let mut bytes = Cursor::new(Vec::new());
-    match encoder {
-        BandEncoder::Lossless => image.write_to(&mut bytes, ImageFormat::Png)?,
-        BandEncoder::Jpeg => {
-            let mut jpeg =
-                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, BAND_JPEG_QUALITY);
-            jpeg.encode_image(&image.to_rgb8())?;
+/// 切片编码前的 RGB 视图：带透明度的源图合成到白纸上，其余只降位深。
+///
+/// JPEG 没有 alpha 通道，而丢掉它会让透明区域变成文件里存的那几个 RGB 值——通常是黑的，于是
+/// 白纸变黑纸。已经是 RGB 的源图不复制。
+fn opaque_rgb(image: &DynamicImage) -> Cow<'_, ImageBuffer<Rgb<u8>, Vec<u8>>> {
+    if let Some(rgb) = image.as_rgb8() {
+        return Cow::Borrowed(rgb);
+    }
+    let mut rgba = image.to_rgba8();
+    for pixel in rgba.pixels_mut() {
+        let alpha = f32::from(pixel.0[3]) / 255.0;
+        if alpha < 1.0 {
+            for channel in &mut pixel.0[..3] {
+                *channel = (f32::from(*channel) * alpha + 255.0 * (1.0 - alpha)).round() as u8;
+            }
         }
     }
+    // alpha 已经全部是 255，所以这一次降位深只是丢通道，不再有透明要处理。
+    Cow::Owned(DynamicImage::ImageRgba8(rgba).to_rgb8())
+}
+
+/// 切片的重编码器。
+///
+/// 只有一种，因为切片只有一种形态：未切割的源图已经完整存在项目里（`PageSlice.source` 钉住它
+/// 的 blob），所以切片是派生数据。对已经压缩过的像素再做一次无损重压缩，买到的只是更大的字节
+/// 和更长的等待——实测一条 724×15120 的 PNG 长条，切成 7 片：无损 5883 ms / 17.6 MiB，
+/// q92 是 1866 ms / 4.8 MiB。
+///
+/// 92 保住网点与细描边，那些正是检测器要读的东西，同时远小于 PNG。
+fn encode(image: &DynamicImage) -> Result<Arc<[u8]>> {
+    let mut bytes = Cursor::new(Vec::new());
+    let mut jpeg =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, BAND_JPEG_QUALITY);
+    let rgb = opaque_rgb(image);
+    jpeg.encode_image(&*rgb)?;
     Ok(Arc::from(bytes.into_inner()))
 }
 
@@ -757,6 +809,27 @@ mod tests {
         fs::remove_dir_all(strip.parent().unwrap()).expect("remove fixture directory");
     }
 
+    /// 切片与源图对应区域的平均逐通道绝对差。
+    ///
+    /// 切片是重编码出来的派生数据，所以它不再与源图逐位相同——这正是它廉价的原因。但仍然必须
+    /// 证明它是源图**那一段**的重述而不是别的内容，所以比的是整幅的平均像素差。这里刻意放得很
+    /// 松：量错区域会让白纸对上黑块，均值差上百；编码器的边缘振铃只值个位数。
+    fn mean_difference(band: &DynamicImage, source_region: &DynamicImage) -> f64 {
+        let band = band.to_rgba8();
+        let source_region = source_region.to_rgba8();
+        assert_eq!(band.dimensions(), source_region.dimensions());
+        let pixels = band.width() as f64 * band.height() as f64 * 4.0;
+        band.pixels()
+            .zip(source_region.pixels())
+            .map(|(left, right)| {
+                (0..4)
+                    .map(|channel| u64::from(left.0[channel].abs_diff(right.0[channel])))
+                    .sum::<u64>()
+            })
+            .sum::<u64>() as f64
+            / pixels
+    }
+
     #[test]
     fn the_ad_bands_are_cut_off_before_the_strip_is_sliced() {
         let (head, tail) = (400u32, 300u32);
@@ -788,12 +861,11 @@ mod tests {
             assert_eq!(band.page.width, 360);
             let cut = image::load_from_memory(&band.page.bytes).expect("decode band");
             assert_eq!(cut.height(), band.page.height);
-            let expected = source
-                .crop_imm(0, band.y_offset, 360, band.page.height)
-                .to_rgba8();
+            let expected = source.crop_imm(0, band.y_offset, 360, band.page.height);
+            let difference = mean_difference(&cut, &expected);
             assert!(
-                cut.to_rgba8() == expected,
-                "band at {} is not the source's own pixels",
+                difference < 12.0,
+                "band at {} is not a rendering of its own source region ({difference:.2})",
                 band.y_offset
             );
             cursor += band.page.height;
@@ -919,5 +991,123 @@ mod tests {
         assert!(imported.ad_bands.skipped().is_empty());
 
         fs::remove_dir_all(page.parent().unwrap()).expect("remove fixture directory");
+    }
+
+    /// 导入切页的分阶段基准。
+    ///
+    /// 夹具不入库：`KOHARU_IMPORT_BENCH` 给一个目录或一个文件，测试只读不写。默认 `#[ignore]`，
+    /// 因为它依赖外部数据且单次要跑很久——与 `xianscan-rust/tests/perf_tall_page.rs` 同一做法。
+    ///
+    /// 分解那段按 `cut_one` 的调用顺序逐段累加：解码 → 灰度化 → 行剖面 → 规划 → 裁剪 → 重编码。
+    /// 整条真实路径随后由 `cut_one` 自己再跑一遍，两者对得上才说明这里量的确实是产品在做的事。
+    #[test]
+    #[ignore = "needs external fixtures; point KOHARU_IMPORT_BENCH at a strip"]
+    fn bench_import_stages() {
+        fn ms(duration: Duration) -> f64 {
+            duration.as_secs_f64() * 1e3
+        }
+
+        let fixture = std::env::var("KOHARU_IMPORT_BENCH")
+            .expect("KOHARU_IMPORT_BENCH must name a directory or an image file");
+        let fixture = PathBuf::from(fixture);
+        let mut paths = if fixture.is_dir() {
+            collect_importable(&fixture).expect("collect the benchmark fixtures")
+        } else {
+            vec![fixture]
+        };
+        assert!(!paths.is_empty(), "no importable benchmark fixture found");
+        alphanumeric_sort::sort_slice_by_os_str_key(&mut paths, |path| {
+            path.file_name().unwrap_or_else(|| path.as_os_str())
+        });
+        let params = SliceParams::default();
+
+        for path in &paths {
+            let started = Instant::now();
+            let pages = read(vec![path.clone()]).expect("read the benchmark fixture");
+            let reading = started.elapsed();
+            println!("\n=== {} ===", path.display());
+            println!("    read (bytes + header)   {:>9.1} ms", ms(reading));
+
+            for page in pages {
+                println!(
+                    "\n{}  {}x{}  {:?}  {:.1} MiB source",
+                    page.name,
+                    page.width,
+                    page.height,
+                    page.format,
+                    page.bytes.len() as f64 / (1024.0 * 1024.0)
+                );
+
+                let started = Instant::now();
+                let image = image::load_from_memory_with_format(&page.bytes, page.format)
+                    .expect("decode the benchmark fixture");
+                let decode = started.elapsed();
+
+                let started = Instant::now();
+                let luma = image.to_luma8();
+                let to_luma = started.elapsed();
+
+                let started = Instant::now();
+                let profile = row_profile(&luma);
+                let profiling = started.elapsed();
+
+                let started = Instant::now();
+                let plan = plan_slices(page.width, page.height, &profile, &params);
+                let planning = started.elapsed();
+
+                let mut banding = Duration::ZERO;
+                let mut encoded_bytes = 0usize;
+                let mut bands = 0usize;
+                if let Some(plan) = &plan {
+                    // 与 `band` 同样并行，否则这里量的是一个生产路径并不存在的串行版本。
+                    let started = Instant::now();
+                    let sizes = plan
+                        .page_ranges()
+                        .into_par_iter()
+                        .map(|(_, height)| {
+                            let cropped = image.crop_imm(0, 0, plan.width, height);
+                            encode(&cropped).expect("encode a band").len()
+                        })
+                        .collect::<Vec<_>>();
+                    banding = started.elapsed();
+                    encoded_bytes = sizes.iter().sum();
+                    bands = sizes.len();
+                }
+
+                let measured = decode + to_luma + profiling + planning + banding;
+                println!("    decode                 {:>9.1} ms", ms(decode));
+                println!("    to_luma8               {:>9.1} ms", ms(to_luma));
+                println!("    row_profile            {:>9.1} ms", ms(profiling));
+                println!("    plan_slices            {:>9.1} ms", ms(planning));
+                println!("    crop+encode      x{bands:<4}{:>9.1} ms", ms(banding));
+                println!(
+                    "    bands -> {bands} pages, {:.1} MiB encoded",
+                    encoded_bytes as f64 / (1024.0 * 1024.0)
+                );
+                println!("    measured (production)   {:>9.1} ms", ms(measured));
+
+                // 真实路径：同样的输入走完整的 `cut_one`，用来核对上面这段分解没有跑偏。
+                let started = Instant::now();
+                let outcome = cut_one(page, &params, AdBands::default());
+                let total = started.elapsed();
+                let pages_out = match &outcome {
+                    CutOutcome::Imported(Imported::Strip { bands, .. })
+                    | CutOutcome::ImportedWhole {
+                        entry: Imported::Strip { bands, .. },
+                        ..
+                    } => bands.len(),
+                    CutOutcome::Imported(Imported::Page(_))
+                    | CutOutcome::ImportedWhole {
+                        entry: Imported::Page(_),
+                        ..
+                    } => 1,
+                    CutOutcome::Dropped { .. } => 0,
+                };
+                println!(
+                    "    cut_one (real path)    {:>9.1} ms  -> {pages_out} pages",
+                    ms(total)
+                );
+            }
+        }
     }
 }

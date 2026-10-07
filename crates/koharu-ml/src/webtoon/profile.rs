@@ -1,4 +1,5 @@
 use image::GrayImage;
+use rayon::prelude::*;
 
 /// Per-row luma summary of a grayscale strip.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,46 +17,54 @@ pub struct RowStat {
     pub gradient: f64,
 }
 
-/// Summarizes every row of `image` in a single pass over the pixel buffer.
+/// Summarizes every row of `image`.
 ///
 /// The planner only ever needs per-row aggregates, so materializing a luma
 /// plane here would double the memory traffic of an already large strip for no
 /// benefit. Rows are read as contiguous slices, never through per-pixel
-/// indexing.
+/// indexing. The caller owns the conversion to luma and the trade-off behind it,
+/// because only the caller knows what the source format was.
+///
+/// Rows are also independent: the gradient term restarts at each row, so a row
+/// never looks at its neighbour. That is what lets a strip one image tall
+/// measure across every core instead of one — see [`row_stat`].
 #[must_use]
 pub fn row_profile(image: &GrayImage) -> Vec<RowStat> {
     let width = image.width() as usize;
     if width == 0 {
         return Vec::new();
     }
+    image
+        .as_raw()
+        .par_chunks(width)
+        .enumerate()
+        .map(|(y, row)| row_stat(row, width, y as u32))
+        .collect()
+}
 
-    let pixels = image.as_raw();
-    let mut profile = Vec::with_capacity(image.height() as usize);
-    for y in 0..image.height() as usize {
-        let row = &pixels[y * width..(y + 1) * width];
-        let mut min = u8::MAX;
-        let mut max = u8::MIN;
-        let mut sum = 0u32;
-        let mut gradient = 0u32;
-        let mut previous = row[0];
-        for &value in row {
-            min = min.min(value);
-            max = max.max(value);
-            sum += u32::from(value);
-            gradient += u32::from(value.abs_diff(previous));
-            previous = value;
-        }
-        profile.push(RowStat {
-            y: y as u32,
-            min,
-            max,
-            mean: sum as f32 / width as f32,
-            gradient: if width > 1 {
-                gradient as f64 / (width - 1) as f64
-            } else {
-                0.0
-            },
-        });
+/// One row's aggregates, computed without reference to any other row.
+fn row_stat(row: &[u8], width: usize, y: u32) -> RowStat {
+    let mut min = u8::MAX;
+    let mut max = u8::MIN;
+    let mut sum = 0u32;
+    let mut gradient = 0u32;
+    let mut previous = row[0];
+    for &value in row {
+        min = min.min(value);
+        max = max.max(value);
+        sum += u32::from(value);
+        gradient += u32::from(value.abs_diff(previous));
+        previous = value;
     }
-    profile
+    RowStat {
+        y,
+        min,
+        max,
+        mean: sum as f32 / width as f32,
+        gradient: if width > 1 {
+            gradient as f64 / (width - 1) as f64
+        } else {
+            0.0
+        },
+    }
 }
