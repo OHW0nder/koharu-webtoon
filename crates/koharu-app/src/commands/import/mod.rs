@@ -1110,4 +1110,167 @@ mod tests {
             }
         }
     }
+
+    /// 真实数据上的整章导入基准：逐章跑完整预处理，并校验切片能否被下游消费。
+    ///
+    /// 章与章之间**串行**，与 `build_chapter_projects` 一致；章内由 `import_webtoon` 自己并行。
+    /// 所以这个数字回答的正是"一口气导入一部漫画"在预处理上要花多久，而不是把十章摊到十份 CPU
+    /// 上。夹具目录下的每个子目录算一章。
+    #[test]
+    #[ignore = "needs external fixtures; point KOHARU_IMPORT_BENCH at a chapter root"]
+    fn bench_import_chapters() {
+        fn ms(duration: Duration) -> f64 {
+            duration.as_secs_f64() * 1e3
+        }
+
+        let root = PathBuf::from(std::env::var("KOHARU_IMPORT_BENCH").expect(
+            "KOHARU_IMPORT_BENCH must name a directory of chapter folders",
+        ));
+        let mut chapters = std::fs::read_dir(&root)
+            .expect("read the chapter root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        alphanumeric_sort::sort_slice_by_os_str_key(&mut chapters, |path| {
+            path.file_name().unwrap_or_else(|| path.as_os_str())
+        });
+        assert!(
+            !chapters.is_empty(),
+            "no chapter folder under {}",
+            root.display()
+        );
+        println!("chapters: {}", chapters.len());
+
+        let params = SliceParams::default();
+        // 切片的可用性检查分两层：几何不变量是整数运算，全部跑掉不花钱；"每一片真的能解码出
+        // 内容"要重新解码一张图，是导入本身的好几倍重，所以默认只抽查每四片。想跑满抽查时设
+        // KOHARU_IMPORT_BENCH_DEEP=1 —— 但那时这个基准量到的就主要是校验而不是导入了。
+        let deep = std::env::var("KOHARU_IMPORT_BENCH_DEEP").is_ok();
+        let mut strips = 0usize;
+        let mut slices = 0usize;
+        let mut unsliced = 0usize;
+        let mut checked = 0usize;
+        let mut source_bytes = 0usize;
+        let mut slice_bytes = 0usize;
+        let mut slowest = Duration::ZERO;
+        let mut import_total = Duration::ZERO;
+        let overall = Instant::now();
+
+        for (number, directory) in chapters.iter().enumerate() {
+            let files = collect_importable(directory).expect("collect a chapter");
+            let files_read = files.len();
+            let started = Instant::now();
+            let imported = import_webtoon(files, Slicing::Auto, AdBands::default())
+                .expect("import a chapter");
+            let elapsed = started.elapsed();
+            slowest = slowest.max(elapsed);
+            import_total += elapsed;
+            let checked_started = Instant::now();
+
+            let mut chapter_slices = 0usize;
+            for entry in &imported.imported {
+                let Imported::Strip {
+                    source,
+                    width,
+                    height,
+                    bands,
+                    ..
+                } = entry
+                else {
+                    unsliced += 1;
+                    continue;
+                };
+                source_bytes += source.len();
+                strips += 1;
+                let mut cursor = 0u32;
+                for (index, band) in bands.iter().enumerate() {
+                    let at = band.y_offset;
+                    assert_eq!(
+                        at, cursor,
+                        "{}: slices must tile the source with no gap",
+                        directory.display()
+                    );
+                    assert!(
+                        band.page.height <= params.max_height,
+                        "{}: slice at {at} is {} tall, above max_height {}",
+                        directory.display(),
+                        band.page.height,
+                        params.max_height
+                    );
+                    assert!(
+                        band.page.height >= params.min_height || at + band.page.height == *height,
+                        "{}: slice at {at} is {} tall, below min_height {}",
+                        directory.display(),
+                        band.page.height,
+                        params.min_height
+                    );
+                    assert_eq!(band.page.width, *width, "a slice must keep the source width");
+                    chapter_slices += 1;
+                    slice_bytes += band.page.bytes.len();
+                    cursor += band.page.height;
+                    if deep && (index % 4 == 0 || index + 1 == bands.len()) {
+                        let decoded = image::load_from_memory_with_format(
+                            &band.page.bytes,
+                            band.page.format,
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{}: slice at {at} does not decode: {error}",
+                                directory.display()
+                            )
+                        });
+                        assert_eq!(decoded.height(), band.page.height);
+                        let mean = row_profile(&decoded.to_luma8())
+                            .iter()
+                            .map(|stat| f64::from(stat.mean))
+                            .sum::<f64>()
+                            / f64::from(decoded.height());
+                        assert!(
+                            mean > 8.0,
+                            "{}: slice at {at} came out black (mean luma {mean:.1})",
+                            directory.display()
+                        );
+                        checked += 1;
+                    }
+                }
+                assert_eq!(
+                    cursor, *height,
+                    "{}: slices must cover the source exactly",
+                    directory.display()
+                );
+            }
+            slices += chapter_slices;
+
+            println!(
+                "{:>3}/{}. {:<14} {:>3} files -> {:>4} slices  import {:>9.1} ms  check {:>9.1} ms",
+                number + 1,
+                chapters.len(),
+                directory.file_name().unwrap_or_default().to_string_lossy(),
+                files_read,
+                chapter_slices,
+                ms(elapsed),
+                ms(checked_started.elapsed())
+            );
+        }
+
+        let overall = overall.elapsed();
+        println!("\nunsliced images: {unsliced}, slices decoded for checking: {checked}");
+        println!(
+            "IMPORT total {} chapters, {strips} strips -> {slices} slices in {:.1} s (slowest chapter {:.1} s)",
+            chapters.len(),
+            ms(overall) / 1e3,
+            ms(slowest) / 1e3
+        );
+        println!(
+            "import {:.1} s, checking {:.1} s",
+            ms(import_total) / 1e3,
+            ms(overall.saturating_sub(import_total)) / 1e3
+        );
+        println!(
+            "source {:.1} MiB -> slices {:.1} MiB",
+            source_bytes as f64 / (1024.0 * 1024.0),
+            slice_bytes as f64 / (1024.0 * 1024.0)
+        );
+    }
 }
