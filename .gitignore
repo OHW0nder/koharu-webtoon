@@ -47,6 +47,7 @@ temp/
 tmp/
 playwright-report/
 test-results/
+.playwright-cli/
 
 # integration-tests shared runtime cache
 .cache/
