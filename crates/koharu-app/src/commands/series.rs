@@ -943,17 +943,19 @@ pub(crate) async fn delete_series_chapter(
 
 /// 删掉一部漫画，连同它的全部章项目。
 ///
-/// **章项目必须一起删。** 一个章项目只能属于一部漫画（`docs/series-management-design.md` §1），而「没有被
-/// 任何漫画认领的项目」这一类已经取消。留着它们只会得到一批没有归属的项目——既不进漫画柜，也删不掉。
+/// **删除的单位就是漫画目录。** 章项目住在它下面，所以索引是这棵树的一份清单，而清单马上要连同树一起
+/// 消失：为了删它先读一遍，只会让「索引读不出来」把一次本来做得到的删除挡在门外——导入中途失败留下的
+/// 空壳正是这种目录，而它恰恰最该被清掉。
+///
+/// **正在打开的那一章要先关掉。** 内核里还持有一份打开的场景，它背后的目录删不掉；同时打开的项目只有
+/// 一个，它是不是这部漫画的，看它的引用就够了，不必遍历索引。
 ///
 /// 译文是唯一无法从源目录重建的东西，所以界面上必须先讲清不可逆的范围。
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn delete_series(
     id: String,
     handle: AppHandle<CefRuntime>,
-    projects: State<'_, ProjectLibrary>,
     library: State<'_, SeriesLibrary>,
     processing: State<'_, Processing>,
 ) -> std::result::Result<(), Error> {
@@ -965,17 +967,22 @@ pub(crate) async fn delete_series(
         tracing::info!(series = %id, "the series was already gone");
         return Ok(());
     }
-    let series = library.read(&id)?;
-    let projects = projects.inner().clone();
-    for chapter in &series.chapters {
-        delete_chapter_project(&handle, &reference_of(&id, chapter), projects.clone()).await?;
+    let open = handle
+        .state::<CurrentProject>()
+        .project
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|open| open.reference.series == id);
+    if open {
+        close_current_project(&handle).await?;
     }
     let shown = directory.clone();
     tokio::task::spawn_blocking(move || fs::remove_dir_all(&directory))
         .await
         .context("series deletion task failed")?
         .with_context(|| format!("failed to delete {}", shown.display()))?;
-    tracing::info!(series = %id, chapters = series.chapters.len(), "deleted a series");
+    tracing::info!(series = %id, "deleted a series");
     Ok(())
 }
 

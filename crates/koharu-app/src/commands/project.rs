@@ -304,8 +304,11 @@ impl ProjectLibrary {
 
     pub(crate) fn delete(&self, reference: &ChapterRef) -> Result<()> {
         let path = self.resolve(reference)?;
+        // 目录不在就是这次删除要达成的状态，所以重试要能收敛。索引里登记一章并不等于它在盘上有目录：
+        // 源目录里那个章文件夹是空的，导入就会跳过它，而章节列表照样收下这条——那时候这里正是唯一
+        // 能把它清掉的地方，报「不存在」只会让重试永远停在同一章。
         if !path.is_dir() {
-            bail!("{}/{chapter:?} does not exist", reference.series, chapter = reference.chapter);
+            return Ok(());
         }
         std::fs::remove_dir_all(&path)
             .with_context(|| format!("failed to delete {}", path.display()))
