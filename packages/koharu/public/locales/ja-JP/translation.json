@@ -584,6 +584,23 @@
     "deleteSeriesConfirm": "Delete for good",
     "pipeline": {
       "full": "Full pipeline"
+    },
+    "source": {
+      "addressPlaceholder": "https://omegascans.org/series/…",
+      "bind": "紐付け",
+      "check": "更新を確認",
+      "download": "選択した {{count}} 話をダウンロード",
+      "done": "{{count}} 話をインポートしました",
+      "failed": "ダウンロードが完了しませんでした",
+      "fetch": "更新を取得",
+      "manga": "ページ漫画として取り込みます",
+      "pages": "{{done}}/{{total}} ページ",
+      "site": "出典",
+      "stopped": "停止しました",
+      "unbind": "紐付けを解除",
+      "unboundHint": "omegascans.org の作品URLを貼り付けると、ここから新しい話を取得できます。",
+      "upToDate": "最新の状態です",
+      "webtoon": "ウェブトゥーンとして取り込みます"
     }
   },
   "shelf": {

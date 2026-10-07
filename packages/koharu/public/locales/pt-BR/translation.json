@@ -584,6 +584,23 @@
     "deleteSeriesConfirm": "Delete for good",
     "pipeline": {
       "full": "Full pipeline"
+    },
+    "source": {
+      "addressPlaceholder": "https://omegascans.org/series/…",
+      "bind": "Vincular",
+      "check": "Verificar atualizações",
+      "download": "Baixar {{count}} selecionados",
+      "done": "{{count}} capítulos importados",
+      "failed": "O download não terminou",
+      "fetch": "Trazer atualizações",
+      "manga": "Será importado como páginas",
+      "pages": "{{done}}/{{total}} páginas",
+      "site": "Fonte",
+      "stopped": "Interrompido",
+      "unbind": "Desvincular",
+      "unboundHint": "Cole o endereço da série no omegascans.org para trazer novos capítulos por aqui.",
+      "upToDate": "Já está atualizado",
+      "webtoon": "Será importado como webtoon"
     }
   },
   "shelf": {

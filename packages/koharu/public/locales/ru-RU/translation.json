@@ -584,6 +584,23 @@
     "deleteSeriesConfirm": "Delete for good",
     "pipeline": {
       "full": "Full pipeline"
+    },
+    "source": {
+      "addressPlaceholder": "https://omegascans.org/series/…",
+      "bind": "Привязать",
+      "check": "Проверить обновления",
+      "download": "Загрузить выбранные ({{count}})",
+      "done": "Импортировано глав: {{count}}",
+      "failed": "Загрузка не завершилась",
+      "fetch": "Обновить из источника",
+      "manga": "Будет импортировано как страницы",
+      "pages": "{{done}}/{{total}} стр.",
+      "site": "Источник",
+      "stopped": "Остановлено",
+      "unbind": "Отвязать",
+      "unboundHint": "Вставьте адрес серии с omegascans.org, чтобы загружать новые главы отсюда.",
+      "upToDate": "Уже актуально",
+      "webtoon": "Будет импортировано как вебтун"
     }
   },
   "shelf": {

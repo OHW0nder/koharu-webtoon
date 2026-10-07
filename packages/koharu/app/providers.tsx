@@ -10,13 +10,14 @@ import { Updater } from '@/components/app/Updater'
 import ClientOnly from '@/components/ClientOnly'
 import { refreshTranslationModels } from '@/lib/backend'
 import i18n from '@/lib/i18n'
-import { pageKey, pagesKey, projectKey, queryClient, refresh } from '@/lib/queries'
+import { pageKey, pagesKey, projectKey, queryClient, refresh, seriesDetailKey, seriesKey } from '@/lib/queries'
 import {
   receiveCanvas,
   receiveDownload,
   receiveStartupState,
   receiveJob,
   receiveResources,
+  receiveSourceFetch,
   useKoharuStore,
 } from '@/lib/store'
 import {
@@ -26,6 +27,7 @@ import {
   type Job,
   type ModelResources,
   type ProjectInfo,
+  type SourceFetch,
 } from '@koharu/bridge/protocol'
 import { isTauriRuntime } from '@koharu/bridge/runtime'
 import { Toaster } from '@koharu/ui/components/toast'
@@ -74,6 +76,14 @@ export function Providers({ children }: { children: ReactNode }) {
             } else {
               queryClient.setQueryData(pagesKey, [])
               queryClient.setQueryData(pageKey, null)
+            }
+          }),
+          channel<SourceFetch>((fetch) => {
+            receiveSourceFetch(fetch)
+            // A terminal state means chapters landed in the index. `staleTime` is Infinity, so
+            // without this the shelf and the chapter list keep serving the count from before.
+            if (fetch.state !== 'running') {
+              void refresh(seriesKey, seriesDetailKey(fetch.series)).catch(() => undefined)
             }
           }),
         )

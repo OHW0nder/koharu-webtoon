@@ -1,0 +1,19 @@
+[package]
+name = "koharu-source"
+version.workspace = true
+edition.workspace = true
+description = "Manga source site protocols for Koharu."
+license = "MIT OR Apache-2.0"
+authors.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords = ["koharu", "manga", "scraper"]
+categories = ["development-tools", "science"]
+publish = true
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

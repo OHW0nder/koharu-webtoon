@@ -13,6 +13,7 @@ use crate::commands::{
     processing::{JobChannel, Processing},
     project::{CurrentProject, ProjectLibrary},
     series::SeriesLibrary,
+    source::{SourceFetchChannel, SourceFetches},
 };
 
 /// 管线跑的那份配置句柄。
@@ -153,6 +154,8 @@ pub fn run(context: tauri::Context<CefRuntime>) -> Result<()> {
             application.manage(projects.clone());
             application.manage(SeriesLibrary::new(&projects));
             application.manage(Processing::default());
+            application.manage(SourceFetches::default());
+            application.manage(SourceFetchChannel::default());
             application.manage(CanvasChannel::default());
             application.manage(JobChannel::default());
             application.manage(DownloadChannel::default());

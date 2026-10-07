@@ -14,6 +14,7 @@ use super::{
     processing::{Job, JobChannel, Processing},
     project::{ChapterRef, CurrentProject, Page, PageSummary, Project, ProjectInfo, ProjectLibrary},
     series::SeriesLibrary,
+    source::{SourceFetch, SourceFetchChannel},
 };
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -145,6 +146,7 @@ pub(crate) async fn subscribe(
     on_download: Channel<Download>,
     on_resources: Channel<ModelResources>,
     on_project: Channel<Option<ProjectInfo>>,
+    on_source_fetch: Channel<SourceFetch>,
 ) -> std::result::Result<StartupState, Error> {
     handle.state::<Initialization>().wait().await?;
 
@@ -153,6 +155,7 @@ pub(crate) async fn subscribe(
     *handle.state::<DownloadChannel>().channel.lock() = Some(on_download);
     *handle.state::<ResourceChannel>().channel.lock() = Some(on_resources);
     *handle.state::<ProjectChannel>().channel.lock() = Some(on_project);
+    *handle.state::<SourceFetchChannel>().channel.lock() = Some(on_source_fetch);
 
     let canvas = handle.state::<Desktop>().canvas_state();
     let preferences = Preferences::load()?;

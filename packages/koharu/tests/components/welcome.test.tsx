@@ -84,6 +84,7 @@ const DETAIL: Series = {
   ...SUMMARY,
   chapters: [],
   settings: { ad: { head: 0, tail: 0 }, guidance: '', glossary: null, context_pages: 4 },
+  source: null,
 }
 
 describe('deleting a series', () => {

@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 
 import { AdBandField } from '@/components/series/AdBandField'
 import { SeriesSettings } from '@/components/series/SeriesSettings'
+import { SourceUpdatePopover } from '@/components/series/SourceUpdatePopover'
 import { call } from '@/lib/backend'
 import {
   useDeleteSeries,
@@ -98,6 +99,10 @@ export function SeriesView({ id }: { id: string }) {
   )
   const targets = chosen.map((chapter) => referenceOf(id, chapter))
   const webtoonChapters = chapters.filter((chapter) => chapter.kind === 'webtoon').length
+  // The rule the backend applies when a downloaded chapter arrives: the most recently added chapter
+  // decides. Stated here rather than left implicit so the popover can show it before the user acts.
+  const latestKind =
+    chapters.length === 0 ? null : chapters.reduce((a, b) => (b.seq > a.seq ? b : a)).kind
 
   const toggle = (chapter: string) =>
     setSelected((current) =>
@@ -140,6 +145,13 @@ export function SeriesView({ id }: { id: string }) {
           busy={busy}
           ad={series.data?.settings.ad ?? { head: 0, tail: 0 }}
           onImport={(directory, kind, ad) => importChapter({ directory, kind, ad })}
+        />
+
+        <SourceUpdatePopover
+          series={id}
+          source={series.data?.source ?? null}
+          kind={latestKind}
+          busy={busy}
         />
 
         <Button

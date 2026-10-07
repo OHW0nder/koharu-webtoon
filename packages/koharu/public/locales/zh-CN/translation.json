@@ -584,6 +584,23 @@
     "deleteSeriesConfirm": "永久删除",
     "pipeline": {
       "full": "完整流程"
+    },
+    "source": {
+      "addressPlaceholder": "https://omegascans.org/series/…",
+      "bind": "绑定",
+      "check": "检查更新",
+      "download": "下载选中的 {{count}} 章",
+      "done": "已导入 {{count}} 章",
+      "failed": "下载未完成",
+      "fetch": "获取更新",
+      "manga": "将按页漫导入",
+      "pages": "{{done}}/{{total}} 页",
+      "site": "来源",
+      "stopped": "已停止",
+      "unbind": "解绑",
+      "unboundHint": "粘贴 omegascans.org 的作品网址，之后就能从这里拉取新章节。",
+      "upToDate": "已是最新",
+      "webtoon": "将按条漫导入"
     }
   },
   "shelf": {

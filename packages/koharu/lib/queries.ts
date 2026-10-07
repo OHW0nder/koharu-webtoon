@@ -18,6 +18,7 @@ import {
   type Glossary,
   type Operation,
   type SeriesSettings,
+  type SourceChapter,
 } from '@koharu/bridge/protocol'
 
 import { call } from './backend'
@@ -312,6 +313,55 @@ export function useImportSeries() {
     importSeries: (input: { kind: ChapterKind; ad: AdBands }) => mutation.mutateAsync(input),
     importing: useIsMutating({ mutationKey: ['import-series'] }) > 0,
   }
+}
+
+export function useSetSeriesSource(id: string) {
+  const mutation = useMutation({
+    mutationKey: ['set-series-source', id],
+    // `address: null` unbinds. The backend verifies the slug against the site before writing it,
+    // so a wrong paste fails here rather than after a whole download.
+    mutationFn: (address: string | null) => call(commands.setSeriesSource, id, address),
+    onSuccess: () => refresh(seriesDetailKey(id), seriesKey),
+  })
+  return {
+    setSource: mutation.mutateAsync,
+    settingSource: useIsMutating({ mutationKey: ['set-series-source', id] }) > 0,
+  }
+}
+
+export function useCheckSeriesUpdates(id: string) {
+  // Deliberately not a `useQuery`: checking costs two round trips to the site, and a stale answer
+  // is worse than none. The user asks for it, so it runs when they ask.
+  const mutation = useMutation({
+    mutationKey: ['check-series-updates', id],
+    mutationFn: () => call(commands.checkSeriesUpdates, id),
+  })
+  return {
+    checkUpdates: mutation.mutateAsync,
+    checkingUpdates: useIsMutating({ mutationKey: ['check-series-updates', id] }) > 0,
+  }
+}
+
+export function useStartFetch(id: string) {
+  const mutation = useMutation({
+    mutationKey: ['start-fetch', id],
+    // The chapters are the ones `check_series_updates` just returned, echoed back untouched, so the
+    // backend does not have to walk the site listing again to recover their addresses.
+    mutationFn: (chapters: SourceChapter[]) => call(commands.startFetch, id, chapters),
+  })
+  return {
+    startFetch: mutation.mutateAsync,
+    startingFetch: useIsMutating({ mutationKey: ['start-fetch', id] }) > 0,
+  }
+}
+
+export function useCancelFetch() {
+  // Fire and forget: the terminal state arrives over the channel, so there is nothing to await.
+  const mutation = useMutation({
+    mutationKey: ['cancel-fetch'],
+    mutationFn: (task: number) => call(commands.cancelFetch, task),
+  })
+  return { cancelFetch: mutation.mutateAsync }
 }
 
 export async function refresh(...keys: QueryKey[]): Promise<void> {

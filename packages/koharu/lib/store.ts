@@ -15,6 +15,7 @@ import type {
   StartupState,
   ModelResources,
   PageSize,
+  SourceFetch,
 } from '@koharu/bridge/protocol'
 import { toast } from '@koharu/ui/components/toast'
 
@@ -47,6 +48,10 @@ interface KoharuStore {
   resources: ModelResources | null
   jobs: Record<string, Job>
   downloads: Record<string, Download>
+  /// One entry per series, keyed by series id rather than by task id: the series is what the UI
+  /// asks about, and the backend allows only one fetch per series anyway. Terminal states stay
+  /// until the popover that started the work dismisses them, so a failure is still readable.
+  sourceFetches: Record<string, SourceFetch>
   camera: { zoom: number; translation: [number, number]; fitted: boolean }
   canvasPage: EntityId | null
   canvasRevision: number | null
@@ -87,6 +92,7 @@ interface KoharuStore {
   requestCanvasFit: () => void
   dismissJob: (id: string) => void
   dismissDownload: (id: number) => void
+  dismissSourceFetch: (series: string) => void
 }
 
 export const defaultShortcuts: Shortcuts = {
@@ -107,6 +113,7 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
   resources: null,
   jobs: {},
   downloads: {},
+  sourceFetches: {},
   camera: { zoom: 1, translation: [0, 0], fitted: true },
   canvasPage: null,
   canvasRevision: null,
@@ -155,6 +162,12 @@ export const useKoharuStore = create<KoharuStore>()((set) => ({
       delete downloads[String(id)]
       return { downloads }
     }),
+  dismissSourceFetch: (series) =>
+    set((state) => {
+      const sourceFetches = { ...state.sourceFetches }
+      delete sourceFetches[series]
+      return { sourceFetches }
+    }),
 }))
 
 export function receiveStartupState(state: StartupState): void {
@@ -181,6 +194,12 @@ export function receiveDownload(download: Download): void {
     else downloads[String(download.id)] = download
     return { downloads }
   })
+}
+
+export function receiveSourceFetch(sourceFetch: SourceFetch): void {
+  useKoharuStore.setState((state) => ({
+    sourceFetches: { ...state.sourceFetches, [sourceFetch.series]: sourceFetch },
+  }))
 }
 
 export function receivePreferences(preferences: Preferences): void {

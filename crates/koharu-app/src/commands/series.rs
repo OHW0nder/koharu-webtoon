@@ -38,6 +38,28 @@ use crate::injection;
 /// 索引文件名。
 const INDEX: &str = "series.json";
 
+/// 生肉来源站点。
+///
+/// 枚举而不是自由字符串：每种站点的地址模板与页面形状都由 `koharu-source` 里对应的模块拥有，
+/// 站点名只是派发的依据。枚举让「不支持的站点」在类型上不可表达，也免掉了一份中央白名单。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SeriesSite {
+    /// OmegaScans（`omegascans.org`）。
+    OmegaScans,
+}
+
+/// 这部漫画的生肉来自哪里。
+///
+/// 只有 slug 是身份。站点给的其余信息（作品号、章节地址、更新时间）都是随时能重查的派生值，
+/// 落进索引就等于把自己绑死在站点的当前格式上。
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct SeriesSource {
+    pub site: SeriesSite,
+    /// 作品在站点地址里的那一段，例如 `love-quest`。
+    pub slug: String,
+}
+
 /// 一部漫画。
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct Series {
@@ -53,6 +75,11 @@ pub struct Series {
     pub cover: Option<String>,
     pub chapters: Vec<SeriesChapter>,
     pub settings: SeriesSettings,
+    /// 生肉来源。未绑定时自动更新不可用——这是「用户还没指定站点」，不是配置坏了。
+    ///
+    /// 缺键即未绑定，所以老索引读得出来，不需要迁移。
+    #[serde(default)]
+    pub source: Option<SeriesSource>,
 }
 
 /// Reads the series-level translation settings.
@@ -792,30 +819,29 @@ fn report_ad_bands(series: &str, report: &import::AdBandReport) {
     }
 }
 
-/// 把一个下载好的章节文件夹并入这部漫画。
+/// 把一个装好页面的目录并入这部漫画。
 ///
 /// **章名就是文件夹名。** 用户从生肉站点手动下载，那个文件夹名是他唯一表达的意图；应用不追问
 /// 「这是第几话」，只按名字把它放进正确的位置。序号由全体章名决定，所以中途插入一章、或者删掉
 /// 中间一章，都不需要用户心算它该是第几话。
 ///
+/// 读索引 → 建项目 → 写 blob → 写索引 → 失败回滚，全在这一个函数里闭合，因此批量调用方
+/// （自动下载）每章拿到的都是最新索引视图，而不是一份读了半天的副本。
+///
+/// 与处理流水线的互斥不在这里：那是命令边界的事，进来之前就该挡住。
+///
 /// `ad` 是「沿用设置区里的值」为假时用户填的那一组高度。传 `None` 表示沿用本漫画的设置；传值表示
-/// 这一次用用户的值而**不写回索引**——设置只有一份，导入完这一章之后仍然由设置区说了算
+/// 这一次用调用方的值而**不写回索引**——设置只有一份，导入完这一章之后仍然由设置区说了算
 /// （`docs/series-settings-design.md` §2.3）。
-#[tauri::command]
-#[specta::specta]
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn import_series_chapter(
-    id: String,
-    directory: PathBuf,
+pub(crate) async fn ingest_chapter(
+    library: &SeriesLibrary,
+    projects: &ProjectLibrary,
+    id: &str,
+    directory: &Path,
     kind: ChapterKind,
     ad: Option<AdBands>,
-    projects: State<'_, ProjectLibrary>,
-    library: State<'_, SeriesLibrary>,
-    processing: State<'_, Processing>,
-) -> std::result::Result<Series, Error> {
-    reject_import_while_processing(&processing)?;
-    let projects = projects.inner().clone();
-    let mut series = library.read(&id)?;
+) -> Result<Series> {
+    let mut series = library.read(id)?;
 
     let name = directory
         .file_name()
@@ -823,11 +849,11 @@ pub(crate) async fn import_series_chapter(
         .context("the chosen folder has no usable name")?
         .to_owned();
     if series.chapters.iter().any(|chapter| chapter.title == name) {
-        return Err(anyhow::anyhow!("{name} is already part of this series").into());
+        bail!("{name} is already part of this series");
     }
-    let files = import::collect_importable(&directory)?;
+    let files = import::collect_importable(directory)?;
     if files.is_empty() {
-        return Err(anyhow::anyhow!("{name} holds no importable pages").into());
+        bail!("{name} holds no importable pages");
     }
 
     let ad = ad.unwrap_or(series.settings.ad);
@@ -864,13 +890,31 @@ pub(crate) async fn import_series_chapter(
     if let Err(error) = outcome {
         // 项目建好而索引没写进去，这一章就成了没有主人的残骸；它连候选列表都进不去，重试会撞上
         // 同名目录。删掉它，失败的那一趟才真的没有留下东西。
-        rollback_projects(&projects, std::slice::from_ref(&reference)).await;
+        rollback_projects(projects, std::slice::from_ref(&reference)).await;
         series
             .chapters
             .retain(|chapter| !(chapter.chapter == reference.chapter && chapter.title == name));
-        return Err(error.into());
+        return Err(error);
     }
     Ok(series)
+}
+
+/// 把一个下载好的章节文件夹并入这部漫画。
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn import_series_chapter(
+    id: String,
+    directory: PathBuf,
+    kind: ChapterKind,
+    ad: Option<AdBands>,
+    projects: State<'_, ProjectLibrary>,
+    library: State<'_, SeriesLibrary>,
+    processing: State<'_, Processing>,
+) -> std::result::Result<Series, Error> {
+    reject_import_while_processing(&processing)?;
+    ingest_chapter(library.inner(), projects.inner(), &id, &directory, kind, ad)
+        .await
+        .map_err(Into::into)
 }
 
 /// 关掉正在打开的章项目，然后删掉它。
@@ -1302,6 +1346,8 @@ fn plan_series(library: &SeriesLibrary, source: &Path, kind: ChapterKind) -> Res
         cover: None,
         chapters,
         settings: SeriesSettings::default(),
+        // 导入是用户从本地目录做的，站点是另一件事，用户可以之后自己绑定。
+        source: None,
     })
 }
 

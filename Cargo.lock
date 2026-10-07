@@ -4718,6 +4718,7 @@ dependencies = [
  "koharu-runtime",
  "koharu-scene",
  "koharu-secrets",
+ "koharu-source",
  "koharu-translator",
  "open",
  "parking_lot",
@@ -5063,6 +5064,16 @@ dependencies = [
  "linux-keyutils-keyring-store",
  "secrecy",
  "serde",
+]
+
+[[package]]
+name = "koharu-source"
+version = "0.83.5"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -19,7 +19,7 @@ export const commands = {
 	active_page: EntityId | null,
 	can_undo: boolean,
 	can_redo: boolean,
-} | null>) => __TAURI_INVOKE<StartupState>("subscribe", { onCanvas: mapChannel(onCanvas, (v) => ({...v,revision:v.revision==null?v.revision:v.revision})), onJob, onDownload, onResources: mapChannel(onResources, (v) => ({...v,devices:v.devices.map(i=>({...i,memory_budget:i.memory_budget==null?i.memory_budget:i.memory_budget,memory_used:i.memory_used==null?i.memory_used:i.memory_used,utilization:i.utilization==null?i.utilization:i.utilization}))})), onProject }).then((v) => (({...v,preferences:({...v.preferences,pipeline:({...v.preferences.pipeline,translation:({...v.preferences.pipeline.translation,generation:({...v.preferences.pipeline.translation.generation,temperature:v.preferences.pipeline.translation.generation.temperature==null?v.preferences.pipeline.translation.generation.temperature:v.preferences.pipeline.translation.generation.temperature,top_p:v.preferences.pipeline.translation.generation.top_p==null?v.preferences.pipeline.translation.generation.top_p:v.preferences.pipeline.translation.generation.top_p,min_p:v.preferences.pipeline.translation.generation.min_p==null?v.preferences.pipeline.translation.generation.min_p:v.preferences.pipeline.translation.generation.min_p,repeat_penalty:v.preferences.pipeline.translation.generation.repeat_penalty==null?v.preferences.pipeline.translation.generation.repeat_penalty:v.preferences.pipeline.translation.generation.repeat_penalty,frequency_penalty:v.preferences.pipeline.translation.generation.frequency_penalty==null?v.preferences.pipeline.translation.generation.frequency_penalty:v.preferences.pipeline.translation.generation.frequency_penalty,presence_penalty:v.preferences.pipeline.translation.generation.presence_penalty==null?v.preferences.pipeline.translation.generation.presence_penalty:v.preferences.pipeline.translation.generation.presence_penalty})}),processor:({...v.preferences.pipeline.processor,"koharu-layout-rfdetr-seg-2xl":v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]:({...v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"],text_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold,bubble_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold,panel_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold})})})}),jobs:v.jobs.map(i=>i),canvas:({...v.canvas,revision:v.canvas.revision==null?v.canvas.revision:v.canvas.revision})}) as typeof v)),
+} | null>, onSourceFetch: Channel<SourceFetch>) => __TAURI_INVOKE<StartupState>("subscribe", { onCanvas: mapChannel(onCanvas, (v) => ({...v,revision:v.revision==null?v.revision:v.revision})), onJob, onDownload, onResources: mapChannel(onResources, (v) => ({...v,devices:v.devices.map(i=>({...i,memory_budget:i.memory_budget==null?i.memory_budget:i.memory_budget,memory_used:i.memory_used==null?i.memory_used:i.memory_used,utilization:i.utilization==null?i.utilization:i.utilization}))})), onProject, onSourceFetch }).then((v) => (({...v,preferences:({...v.preferences,pipeline:({...v.preferences.pipeline,translation:({...v.preferences.pipeline.translation,generation:({...v.preferences.pipeline.translation.generation,temperature:v.preferences.pipeline.translation.generation.temperature==null?v.preferences.pipeline.translation.generation.temperature:v.preferences.pipeline.translation.generation.temperature,top_p:v.preferences.pipeline.translation.generation.top_p==null?v.preferences.pipeline.translation.generation.top_p:v.preferences.pipeline.translation.generation.top_p,min_p:v.preferences.pipeline.translation.generation.min_p==null?v.preferences.pipeline.translation.generation.min_p:v.preferences.pipeline.translation.generation.min_p,repeat_penalty:v.preferences.pipeline.translation.generation.repeat_penalty==null?v.preferences.pipeline.translation.generation.repeat_penalty:v.preferences.pipeline.translation.generation.repeat_penalty,frequency_penalty:v.preferences.pipeline.translation.generation.frequency_penalty==null?v.preferences.pipeline.translation.generation.frequency_penalty:v.preferences.pipeline.translation.generation.frequency_penalty,presence_penalty:v.preferences.pipeline.translation.generation.presence_penalty==null?v.preferences.pipeline.translation.generation.presence_penalty:v.preferences.pipeline.translation.generation.presence_penalty})}),processor:({...v.preferences.pipeline.processor,"koharu-layout-rfdetr-seg-2xl":v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"]:({...v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"],text_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].text_threshold,bubble_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].bubble_threshold,panel_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold==null?v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold:v.preferences.pipeline.processor["koharu-layout-rfdetr-seg-2xl"].panel_threshold})})})}),jobs:v.jobs.map(i=>i),canvas:({...v.canvas,revision:v.canvas.revision==null?v.canvas.revision:v.canvas.revision})}) as typeof v)),
 	getProject: () => __TAURI_INVOKE<{
 	reference: ChapterRef,
 	label: string,
@@ -101,18 +101,14 @@ export const commands = {
 	cover: string | null,
 	chapters: SeriesChapter[],
 	settings: SeriesSettings,
-} | null>("import_series", { kind, ad }),
 	/**
-	 *  把一个下载好的章节文件夹并入这部漫画。
+	 *  生肉来源。未绑定时自动更新不可用——这是「用户还没指定站点」，不是配置坏了。
 	 * 
-	 *  **章名就是文件夹名。** 用户从生肉站点手动下载，那个文件夹名是他唯一表达的意图；应用不追问
-	 *  「这是第几话」，只按名字把它放进正确的位置。序号由全体章名决定，所以中途插入一章、或者删掉
-	 *  中间一章，都不需要用户心算它该是第几话。
-	 * 
-	 *  `ad` 是「沿用设置区里的值」为假时用户填的那一组高度。传 `None` 表示沿用本漫画的设置；传值表示
-	 *  这一次用用户的值而**不写回索引**——设置只有一份，导入完这一章之后仍然由设置区说了算
-	 *  （`docs/series-settings-design.md` §2.3）。
+	 *  缺键即未绑定，所以老索引读得出来，不需要迁移。
 	 */
+	source?: SeriesSource | null,
+} | null>("import_series", { kind, ad }),
+	/**  把一个下载好的章节文件夹并入这部漫画。 */
 	importSeriesChapter: (id: string, directory: string, kind: ChapterKind, ad: {
 	/**  自源图顶端起算的首条高度。0 表示这一端没有广告。 */
 	head: number,
@@ -206,6 +202,27 @@ export const commands = {
 	 *  is written into the archive as soon as it is rendered — the whole volume is never in memory at once.
 	 */
 	exportSeriesChapters: (id: string, chapters: ChapterRef[]) => __TAURI_INVOKE<null>("export_series_chapters", { id, chapters }),
+	/**
+	 *  把这部漫画的生肉来源设成用户给的那个地址。
+	 * 
+	 *  地址先解析成 slug，再向站点核对一次才落盘：当 slug 用会静默拉到别的作品上，而绑定错了要等到
+	 *  下载完才发现。传 `None` 解绑。
+	 * 
+	 *  这里假定站点只有一个所以不问「哪个站点」；真要加第二个站点时，这里要显式收一个站点参数，
+	 *  而不是从域名去猜——猜错的表现和现在传错 slug 一样。
+	 */
+	setSeriesSource: (id: string, address: string | null) => __TAURI_INVOKE<Series>("set_series_source", { id, address }),
+	/**  站点上有哪些章是本地还没有的。 */
+	checkSeriesUpdates: (id: string) => __TAURI_INVOKE<SourceCheck>("check_series_updates", { id }),
+	/**  把选中的章节下载下来，走正常导入进库。 */
+	startFetch: (id: string, chapters: SourceChapter[]) => __TAURI_INVOKE<number>("start_fetch", { id, chapters }),
+	/**
+	 *  请求停掉一次下载。
+	 * 
+	 *  在下一个页面边界生效。当前这一章因此不会进库，它的临时目录也一起丢掉；而已经进库的章
+	 *  留在库里。之所以不打断正在写的那一页：那样会留下一个页数不齐的章项目，那比缺一章难发现得多。
+	 */
+	cancelFetch: (id: number) => __TAURI_INVOKE<null>("cancel_fetch", { id }),
 	selectPage: (page: EntityId) => __TAURI_INVOKE<PageSelection>("select_page", { page }).then((v) => (({...v,page:({...v.page,layers:v.page.layers.map(i=>i),regions:v.page.regions.map(i=>({...i,geometry:({...i.geometry,points:i.geometry.points.map(i=>i)})}))})}) as typeof v)),
 	renamePage: (page: EntityId, label: string) => __TAURI_INVOKE<null>("rename_page", { page, label }),
 	deletePages: (pages: EntityId[]) => __TAURI_INVOKE<null>("delete_pages", { pages }),
@@ -790,6 +807,12 @@ export type Series = {
 	cover: string | null,
 	chapters: SeriesChapter[],
 	settings: SeriesSettings,
+	/**
+	 *  生肉来源。未绑定时自动更新不可用——这是「用户还没指定站点」，不是配置坏了。
+	 * 
+	 *  缺键即未绑定，所以老索引读得出来，不需要迁移。
+	 */
+	source?: SeriesSource | null,
 };
 
 /**  漫画里的一章。 */
@@ -852,6 +875,28 @@ export type SeriesSettings = {
 	context_pages?: number,
 };
 
+/**
+ *  生肉来源站点。
+ * 
+ *  枚举而不是自由字符串：每种站点的地址模板与页面形状都由 `koharu-source` 里对应的模块拥有，
+ *  站点名只是派发的依据。枚举让「不支持的站点」在类型上不可表达，也免掉了一份中央白名单。
+ */
+export type SeriesSite = 
+/**  OmegaScans（`omegascans.org`）。 */
+"omega_scans";
+
+/**
+ *  这部漫画的生肉来自哪里。
+ * 
+ *  只有 slug 是身份。站点给的其余信息（作品号、章节地址、更新时间）都是随时能重查的派生值，
+ *  落进索引就等于把自己绑死在站点的当前格式上。
+ */
+export type SeriesSource = {
+	site: SeriesSite,
+	/**  作品在站点地址里的那一段，例如 `love-quest`。 */
+	slug: string,
+};
+
 /**  首页漫画柜需要的一条漫画。 */
 export type SeriesSummary = {
 	id: string,
@@ -862,6 +907,51 @@ export type SeriesSummary = {
 	chapters: number,
 	done: number,
 };
+
+/**
+ *  站点上一篇作品的一章。
+ * 
+ *  同时是「检查更新」的返回项与「开始下载」的入参：前端原样回传后端刚给的东西，后端因此
+ *  不必为了拿 slug 再把整个章节列表拉一遍。
+ */
+export type SourceChapter = {
+	/**  归一化后的章名，也就是本地将用的 `SeriesChapter.title`。 */
+	name: string,
+	/**  阅读页地址的最后一段。 */
+	slug: string,
+};
+
+/**  检查更新的结果。 */
+export type SourceCheck = {
+	/**  站点上的作品名，用来核对绑对了没有。 */
+	title: string,
+	/**  下载时会用的源形态。界面照它显示，用户才知道条漫漫画不会被当成页漫。 */
+	kind: ChapterKind,
+	/**  本地还没有的章节，按章号升序。 */
+	missing: SourceChapter[],
+};
+
+/**  一次下载任务的进度。 */
+export type SourceFetch = {
+	id: number,
+	series: string,
+	chapter: string,
+	/**  从 1 起算，让界面不必自己加。 */
+	chapter_index: number,
+	chapter_total: number,
+	page_index: number,
+	page_total: number,
+	state: SourceFetchState,
+	error: string | null,
+};
+
+export type SourceFetchState = "running" | 
+/**  全部选中章节都已进库。 */
+"finished" | 
+/**  中途失败。已经进库的章节仍然留在库里。 */
+"failed" | 
+/**  用户叫停。 */
+"stopped";
 
 export type SourceText = {
 	text: string,

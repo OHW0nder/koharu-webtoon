@@ -9,6 +9,7 @@ pub(crate) mod preferences;
 pub(crate) mod processing;
 pub(crate) mod project;
 pub(crate) mod series;
+pub(crate) mod source;
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -118,6 +119,10 @@ pub fn bindings() -> tauri_specta::Builder<tauri_runtime_cef::CefRuntime> {
             series::rename_series,
             series::process_series_chapters,
             series::export_series_chapters,
+            source::set_series_source,
+            source::check_series_updates,
+            source::start_fetch,
+            source::cancel_fetch,
             lifecycle::select_page,
             editing::rename_page,
             editing::delete_pages,

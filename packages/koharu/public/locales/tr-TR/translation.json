@@ -584,6 +584,23 @@
     "deleteSeriesConfirm": "Delete for good",
     "pipeline": {
       "full": "Full pipeline"
+    },
+    "source": {
+      "addressPlaceholder": "https://omegascans.org/series/…",
+      "bind": "Bağla",
+      "check": "Güncellemeleri denetle",
+      "download": "Seçilen {{count}} bölümü indir",
+      "done": "{{count}} bölüm içe aktarıldı",
+      "failed": "İndirme tamamlanmadı",
+      "fetch": "Güncelleme getir",
+      "manga": "Sayfa olarak içe aktarılacak",
+      "pages": "{{done}}/{{total}} sayfa",
+      "site": "Kaynak",
+      "stopped": "Durduruldu",
+      "unbind": "Bağı kaldır",
+      "unboundHint": "Buradan yeni bölüm çekebilmek için omegascans.org'daki seri adresini yapıştır.",
+      "upToDate": "Zaten güncel",
+      "webtoon": "Webtoon olarak içe aktarılacak"
     }
   },
   "shelf": {
