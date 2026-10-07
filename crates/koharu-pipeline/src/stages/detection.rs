@@ -1884,12 +1884,12 @@ fn utterance_bands(bands: &[InkBand]) -> Vec<(u32, u32)> {
     let widths = band_widths(bands);
     let pitches = line_pitches(&rows);
     let threshold = pitch_threshold(&rows, &pitches);
-    let groups = groups_at_pitches(&rows, &pitches, threshold);
-    let split = groups;
 
     if bands.len() < 3 {
         // Two lines leave one pitch and nothing to compare it against, so a pair
-        // is never separated on measurement alone.
+        // is never separated on measurement alone. A profile that found no ink at
+        // all lands here too, and is recorded as the same rejection: there is
+        // nothing to split either way.
         record_utterance_profile(&widths, &pitches, threshold, 1, "too-few-lines");
         return Vec::new();
     }
@@ -1900,11 +1900,15 @@ fn utterance_bands(bands: &[InkBand]) -> Vec<(u32, u32)> {
         record_utterance_profile(&widths, &pitches, threshold, 1, "vertical");
         return Vec::new();
     }
-    record_utterance_profile(&widths, &pitches, threshold, split.len(), "split");
-    if split.len() < 2 {
+
+    // Grouping reads the first band and indexes every band after it, so it runs
+    // only once the profile is known to hold enough bands to index.
+    let groups = groups_at_pitches(&rows, &pitches, threshold);
+    record_utterance_profile(&widths, &pitches, threshold, groups.len(), "split");
+    if groups.len() < 2 {
         Vec::new()
     } else {
-        split
+        groups
     }
 }
 
@@ -2972,6 +2976,36 @@ mod tests {
         let output = split_joined_texts(&image, &detections);
 
         assert_eq!(output.len(), 1);
+    }
+
+    #[test]
+    fn a_block_the_profile_cannot_read_stays_one_utterance() {
+        // Two ways to arrive at a profile with no bands at all: a mask carrying no
+        // ink inside the box, and a box that misses the page. Grouping indexed the
+        // first band, so an empty profile used to panic on the split instead of
+        // declining it. Neither block is readable as lines, so neither is split.
+        let bands = [(1, 9), (11, 19), (21, 29)];
+        let image = banded_page(100, &bands);
+        let blank = KoharuLayoutMask {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 29,
+            pixels: vec![0; 100 * 29],
+        };
+        let detections = vec![
+            detection_with_mask("text", 0.8, [0.0, 0.0, 100.0, 29.0], blank),
+            detection_with_mask(
+                "text",
+                0.8,
+                [200.0, 200.0, 300.0, 300.0],
+                banded_mask(100, &bands),
+            ),
+        ];
+
+        let output = split_joined_texts(&image, &detections);
+
+        assert_eq!(output.len(), 2, "each block survives unsplit");
     }
 
     /// A page whose rows carry a single narrow glyph, which is the shape a
