@@ -208,6 +208,9 @@ opt-level = 3
 # 上面几条已经把两个 WebP 编解码器挑出来了，但 JPEG 与 PNG 的编解码器当时漏在列表外，于是
 # 导入与渲染里最贵的两段在开发期是未优化的，耗时测量整体失真。这几个补上之后，dev profile 下
 # 量到的编解码耗时就接近 release 了。
+#
+# 注意：改动这里会让 cef-dll-sys 的构建脚本指纹失效，需要 cmake 与 ninja 才能重新构建。
+# 本机没有把它们放进 PATH，冷构建前要先自己装好并加进 PATH。
 [profile.dev.package.zune-jpeg]
 opt-level = 3
 

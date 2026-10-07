@@ -2,6 +2,26 @@
 
 <p align="center">ML-powered manga translator, written in <b>Rust</b>.</p>
 
+> [!WARNING]
+> **本仓库是个人自用的二次开发分支，不是 Koharu 官方仓库。**
+>
+> 基线是官方 [koharu-rs/koharu](https://github.com/koharu-rs/koharu) 的 `0.83.5`，此后持续合并上游更新。动手的理由是官方版本不满足我自己的翻译工作流，而不是觉得它做得不够好——所以这份分支的目标是「够用」，不是「更好」，不追求与官方版本对齐，也没有发布预编译安装包。
+>
+> **在官方能力之上，本分支增加了：**
+>
+> - **条漫（webtoon）支持**
+>   官方只处理页漫。条漫是一张超高纵向长图，本分支在导入时按可读高度切页并保持宽高比，切片统一以 JPEG q92 编码并并行处理；条漫首尾的站点广告带在导入时裁掉，高度按每部漫画单独配置。检测侧另有针对条漫的改进：跨气泡的文本块按行投影拆成各自的 utterance、掩膜感知的重复抑制、粘连的气泡拆成各自轮廓。
+> - **上文注入**
+>   翻译每一页时注入该部漫画的术语表与翻译风格指导，而不是把两者塞进一段散文。上文回溯窗口在章内滑动并跨章边界连续：翻到本章第 1 页时窗口整段来自上一章末尾，翻到第 2 页时让出一页换成本章第 1 页。术语表命中放宽到词元，因此认得出人名的简称。
+> - **漫画系列管理**
+>   官方以「项目」为管理单位。本分支把项目按漫画归拢成书架，每部漫画拥有自己的设置（条漫广告带、翻译风格指导、上文页数、术语表）。章节列表支持搜索、全选、按编号区间批量处理、批量导出 cbz 与批量删除；漫画库位置可在设置里指定；可绑定 OmegaScans 地址一键拉取缺失章节；编辑器内加入章间跳转。
+> - **其他**
+>   漫画管理页改为左右分栏（章节列表 / 设置与操作）。CEF 内核与 Tauri v3 alpha 跟随上游同步。
+>
+> 设计取舍与实测记录写在 [`docs/`](./docs)（中文）；条漫支持的技术细节与性能数据见 [`docs/reference/koharu-webtoon-support.md`](./docs/reference/koharu-webtoon-support.md)。
+>
+> 上游的版权声明与双许可证完整保留，见 [License](#license)。
+
 <p align="center">
 <a href="https://github.com/koharu-rs/koharu/releases/latest" target="_blank"><img alt="GitHub Downloads (all assets, all releases)" src="https://img.shields.io/github/downloads/koharu-rs/koharu/total?style=for-the-badge&link=https%3A%2F%2Fgithub.com%2Fkoharu-rs%2Fkoharu%2Freleases%2Flatest"></a>
 </p>
@@ -138,9 +158,9 @@ OpenAI-compatible endpoints are also supported.
 
 ## Installation
 
-Download release builds from the [releases page](https://github.com/koharu-rs/koharu/releases/latest). [Installation requirements and first launch](https://koharu.rs/en/installation) vary by operating system.
+**本仓库不发布预编译安装包**，需要从源码构建，见 [Development](#development)。
 
-Builds are available for Windows, macOS, and Linux.
+官方安装包在 [koharu-rs/koharu releases](https://github.com/koharu-rs/koharu/releases/latest)，另有 winget 与 Homebrew 渠道（见下方）。但那些构建**不包含**上面列出的条漫、系列管理与上文注入能力。上游文档里的[安装要求与首次启动说明](https://koharu.rs/en/installation)对本分支同样适用。
 
 ### WinGet
 
@@ -157,6 +177,9 @@ Install on macOS with [Homebrew](https://brew.sh/):
 ```bash
 brew install --cask koharu
 ```
+
+> [!IMPORTANT]
+> 以上两个渠道安装的是**官方版本**。本分支的内置更新也指向官方发布通道——官方一旦发布新版本就会提示更新，而升级后本分支的能力会全部消失。因此请勿使用应用内的更新功能；需要回到本分支的代码时重新构建即可。
 
 ## Troubleshooting
 
@@ -197,7 +220,9 @@ bun dev
 bun run build
 ```
 
-The executable is written to `target/release`.
+The executable is written to `target/release`. This produces the executable only — the
+installer bundle belongs to the release workflow, which this branch does not run. A cold build
+compiles CEF from source and therefore needs `cmake` and `ninja` on `PATH`.
 
 ## Sponsorship
 
@@ -215,6 +240,8 @@ Thanks to all the contributors who have helped make Koharu better!
 <a href="https://github.com/koharu-rs/koharu/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=koharu-rs/koharu" />
 </a>
+
+> 以上赞助与贡献者信息属于上游项目。报告问题时请先分清是本分支引入的还是上游已有的：上游问题去 [koharu-rs/koharu](https://github.com/koharu-rs/koharu)，本分支的问题记在本仓库。
 
 ## License
 
