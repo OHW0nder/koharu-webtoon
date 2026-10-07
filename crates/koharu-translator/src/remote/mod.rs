@@ -6,6 +6,7 @@ mod gemini;
 mod google_cloud;
 mod grok;
 mod lm_studio;
+mod mimo;
 mod minimax;
 mod openai;
 mod openai_compatible;
@@ -25,6 +26,7 @@ pub use gemini::GeminiConfig;
 pub use google_cloud::GoogleCloudConfig;
 pub use grok::GrokConfig;
 pub use lm_studio::LmStudioConfig;
+pub use mimo::MiMoConfig;
 pub use minimax::MiniMaxConfig;
 pub use openai::OpenAiConfig;
 pub use openai_compatible::OpenAiCompatibleConfig;
@@ -67,6 +69,7 @@ pub(crate) async fn translate(
         Provider::DeepSeek => {
             deepseek::translate(client, &providers.deepseek, model()?, generation, request).await
         }
+        Provider::MiMo => mimo::translate(client, &providers.mimo, model()?, generation, request).await,
         Provider::OpenAiCompatible => {
             openai_compatible::translate(
                 client,
@@ -102,6 +105,7 @@ pub(crate) async fn models(client: &Client, providers: &ProvidersConfig) -> Vec<
         grok::models(client).boxed(),
         minimax::models(client).boxed(),
         deepseek::models(client).boxed(),
+        mimo::models(client, &providers.mimo).boxed(),
         openai_compatible::models(client, &providers.openai_compatible).boxed(),
         openrouter::models(client).boxed(),
         lm_studio::models(client, &providers.lm_studio).boxed(),

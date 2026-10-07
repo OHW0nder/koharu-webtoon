@@ -325,6 +325,7 @@
     "grok": "xAI Grok 語言模型。",
     "lm-studio": "由 LM Studio 提供的模型。",
     "local": "在此裝置上執行的模型。",
+    "mimo": "小米 MiMo 語言模型。",
     "minimax": "MiniMax 語言模型。",
     "openai": "OpenAI 語言模型。",
     "openai-compatible": "任何提供 OpenAI 相容 API 的伺服器。",
@@ -580,6 +581,9 @@
       "empty": "這個區間裡沒有章節。",
       "from": "起始章節號",
       "hint": "結束留空則只處理起始的那一章。",
+      "select": "選中區間",
+      "selectCount": "選中 {{count}} 章",
+      "selectHint": "結束留空則只選起始的那一章。",
       "to": "結束章節號"
     },
     "deleteChapter": "刪除 {{name}}",

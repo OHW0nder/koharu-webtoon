@@ -325,6 +325,7 @@
     "grok": "xAI Grok language models.",
     "lm-studio": "Models served by LM Studio.",
     "local": "Models running on this device.",
+    "mimo": "Xiaomi MiMo language models.",
     "minimax": "MiniMax language models.",
     "openai": "OpenAI language models.",
     "openai-compatible": "Any server exposing an OpenAI-compatible API.",

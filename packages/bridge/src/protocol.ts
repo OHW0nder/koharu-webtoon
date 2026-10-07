@@ -189,10 +189,11 @@ export const commands = {
 	/**
 	 *  Exports the chosen chapters as one archive that keeps the shelf's shape.
 	 * 
-	 *  **A volume exports as a single `.cbz` whose layout mirrors the shelf:** the series name, then a
-	 *  folder per chapter, then that chapter's pages. Unpacking it gives back
-	 *  `Demo Title/Ch10/00101.jpg`, so the archive reads the way the project does. Exporting one chapter
-	 *  on its own is a different deliverable and stays flat — that archive *is* the chapter.
+	 *  **A volume exports as a single `.cbz` holding one folder per chapter.** Unpacking
+	 *  `Demo Title ch10-ch21.cbz` gives back `Ch10/00101.jpg`, `Ch11/00101.jpg` and so on. The series
+	 *  name is not repeated as a directory: the file name already carries it, and a second copy only
+	 *  nests the archive one level deeper without adding anything a reader can use. Exporting one
+	 *  chapter on its own is a different deliverable and stays flat — that archive *is* the chapter.
 	 * 
 	 *  **The file name carries the range.** `Demo Title ch10-ch21.cbz` says which chapters are inside
 	 *  without opening it, and the numbers are the chapters' own slots, so a range like `ch10-ch12` in
@@ -645,6 +646,10 @@ export type LocalConfig = Record<string, never>;
 
 export type LoginEvent = { type: "progress"; message: string } | { type: "device_code"; verification_url: string; user_code: string };
 
+export type MiMoConfig = {
+	base_url?: string | null,
+};
+
 export type MiniMaxConfig = Record<string, never>;
 
 export type Model = {
@@ -753,9 +758,9 @@ export type ProjectInfo = {
 	can_redo: boolean,
 };
 
-export type Provider = "local" | "openai" | "gemini" | "claude" | "grok" | "minimax" | "deepseek" | "openai-compatible" | "openrouter" | "lm-studio" | "deepl" | "google-cloud-translation" | "caiyun";
+export type Provider = "local" | "openai" | "gemini" | "claude" | "grok" | "minimax" | "deepseek" | "mimo" | "openai-compatible" | "openrouter" | "lm-studio" | "deepl" | "google-cloud-translation" | "caiyun";
 
-export type ProviderConfig = { provider: "local"; settings: LocalConfig } | { provider: "openai"; settings: OpenAiConfig } | { provider: "gemini"; settings: GeminiConfig } | { provider: "claude"; settings: ClaudeConfig } | { provider: "grok"; settings: GrokConfig } | { provider: "minimax"; settings: MiniMaxConfig } | { provider: "deepseek"; settings: DeepSeekConfig } | { provider: "openai-compatible"; settings: OpenAiCompatibleConfig } | { provider: "openrouter"; settings: OpenRouterConfig } | { provider: "lm-studio"; settings: LmStudioConfig } | { provider: "deepl"; settings: DeepLConfig } | { provider: "google-cloud-translation"; settings: GoogleCloudConfig } | { provider: "caiyun"; settings: CaiyunConfig };
+export type ProviderConfig = { provider: "local"; settings: LocalConfig } | { provider: "openai"; settings: OpenAiConfig } | { provider: "gemini"; settings: GeminiConfig } | { provider: "claude"; settings: ClaudeConfig } | { provider: "grok"; settings: GrokConfig } | { provider: "minimax"; settings: MiniMaxConfig } | { provider: "deepseek"; settings: DeepSeekConfig } | { provider: "mimo"; settings: MiMoConfig } | { provider: "openai-compatible"; settings: OpenAiCompatibleConfig } | { provider: "openrouter"; settings: OpenRouterConfig } | { provider: "lm-studio"; settings: LmStudioConfig } | { provider: "deepl"; settings: DeepLConfig } | { provider: "google-cloud-translation"; settings: GoogleCloudConfig } | { provider: "caiyun"; settings: CaiyunConfig };
 
 export type ProviderPreference = {
 	name: string,

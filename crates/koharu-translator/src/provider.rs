@@ -7,8 +7,8 @@ use crate::{
     local::LocalConfig,
     remote::{
         CaiyunConfig, ClaudeConfig, DeepLConfig, DeepSeekConfig, GeminiConfig, GoogleCloudConfig,
-        GrokConfig, LmStudioConfig, MiniMaxConfig, OpenAiCompatibleConfig, OpenAiConfig,
-        OpenRouterConfig,
+        GrokConfig, LmStudioConfig, MiMoConfig, MiniMaxConfig, OpenAiCompatibleConfig,
+        OpenAiConfig, OpenRouterConfig,
     },
 };
 
@@ -156,6 +156,12 @@ define_providers! {
         name: "DeepSeek",
         field: deepseek,
         config: DeepSeekConfig,
+    }
+    MiMo {
+        id: "mimo",
+        name: "MiMo",
+        field: mimo,
+        config: MiMoConfig,
     }
     OpenAiCompatible {
         id: "openai-compatible",
