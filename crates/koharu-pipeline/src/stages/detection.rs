@@ -55,6 +55,26 @@ const DIALOGUE_MASK_CONTAINMENT_THRESHOLD: f32 = 0.9;
 /// How much of the smaller of two instance masks the larger one has to cover
 /// before the pair is treated as the same instance twice.
 const DUPLICATE_MASK_OVERLAP_THRESHOLD: f32 = 0.8;
+/// How much taller than the median line an empty row band has to be before it
+/// separates two utterances instead of two lines of one.
+///
+/// XianScan reaches the same split from the other end, clustering OCR lines and
+/// cutting where the vertical gap clears `min_line_h * 1.75` with an absolute
+/// floor (`src/pipeline/region_builder/clustering.rs`). A ratio against the line
+/// height alone cannot tell a two-line balloon from a four-line one, so the
+/// spacing within this block carries equal weight: every gap inside one utterance
+/// is the same line spacing, and no gap between equal values passes a threshold
+/// built from three times that value.
+const UTTERANCE_GAP_LINE_RATIO: f32 = 1.0;
+const UTTERANCE_GAP_SPACING_RATIO: f32 = 3.0;
+/// Keeps rounding from cutting small type on a gap it never had.
+const UTTERANCE_MIN_LINE_GAP: u32 = 8;
+/// Height over width at which a text block counts as vertical.
+///
+/// Matches the direction test OCR applies to the same geometry. On vertical text
+/// the row projection runs along the strokes, so cutting by rows would break a
+/// word apart instead of separating utterances.
+const HORIZONTAL_TEXT_ASPECT: f32 = 1.15;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(default)]
@@ -297,6 +317,9 @@ async fn write_page(
         detections.retain(|detection| intersects(detection.bbox, region));
     }
     non_maximum_suppression(&mut detections, 0.5);
+    // Splitting changes what a text block covers, so layout order is decided
+    // once afterwards on the blocks that will actually be written.
+    let mut detections = split_joined_texts(&detections);
     sort_by_layout(&mut detections);
 
     let image = image.to_rgb8();
@@ -1773,6 +1796,227 @@ fn detection_order(left: &KoharuLayoutDetection, right: &KoharuLayoutDetection) 
         .then_with(|| left.label.cmp(&right.label))
 }
 
+/// Splits one text detection that covers several utterances into one detection
+/// per utterance.
+///
+/// Two balloons drawn over each other share one interior, so the mask branch
+/// returns a single blob and the text inside it arrives as one block spanning
+/// both. Reading that block in one OCR call hands the translation two lines of
+/// dialogue as a single utterance, which is what makes it run them together and
+/// the typesetter overflow the outline they have to share.
+///
+/// The split is decided on where the ink stops, never on the balloon's shape.
+/// Inside one utterance every row gap is the same line spacing; between two
+/// utterances there is a visibly wider empty band. That difference survives any
+/// balloon outline, any amount of overlap and any mask resolution, and it needs
+/// no notion of a waist — which matters because a merged outline is exactly the
+/// thing whose geometry the model got wrong.
+fn split_joined_texts(detections: &[KoharuLayoutDetection]) -> Vec<KoharuLayoutDetection> {
+    let mut output = Vec::with_capacity(detections.len());
+    for detection in detections {
+        output.extend(utterance_parts(detection));
+    }
+    output
+}
+
+fn utterance_parts(detection: &KoharuLayoutDetection) -> Vec<KoharuLayoutDetection> {
+    let bands = utterance_bands(detection);
+    let expected = bands.len();
+    if expected < 2 {
+        return vec![detection.clone()];
+    }
+    let parts = bands
+        .into_iter()
+        .filter_map(|band| band_detection(detection, band))
+        .collect::<Vec<_>>();
+
+    // Splitting may not lose ink: a band that failed to become a detection means
+    // the block is not cleanly separable after all, and OCR reading it whole
+    // recovers the original text where a partial split would silently drop a
+    // line.
+    let kept = parts.iter().map(|part| part.area).sum::<u32>();
+    if parts.len() < expected || kept != detection.area {
+        return vec![detection.clone()];
+    }
+    parts
+}
+
+/// The row ranges this block's utterances occupy, or empty when it holds one
+/// utterance or cannot be read row-wise at all.
+fn utterance_bands(detection: &KoharuLayoutDetection) -> Vec<(u32, u32)> {
+    if detection.label != "text"
+        || !valid_mask(&detection.mask)
+        || detection.mask.width == 0
+        || detection.mask.height == 0
+    {
+        return Vec::new();
+    }
+    let [left, top, right, bottom] = detection.bbox;
+    let (width, height) = (right - left, bottom - top);
+    if !(width.is_finite() && height.is_finite() && width > 0.0 && height >= 0.0)
+        || height >= width * HORIZONTAL_TEXT_ASPECT
+    {
+        return Vec::new();
+    }
+
+    let bands = ink_bands(&row_ink_counts(&detection.mask));
+    if bands.len() < 2 {
+        return Vec::new();
+    }
+    let gaps = bands
+        .windows(2)
+        .map(|pair| pair[1].0 - pair[0].1)
+        .collect::<Vec<_>>();
+    let threshold = gap_threshold(&bands, &gaps);
+    // The thresholds above are proportions of the page, not of this page, so the
+    // measured bands are the only way to tell whether a real block falls between
+    // them or outside them.
+    tracing::info!(
+        label = "text utterances",
+        lines = bands.len(),
+        gaps = ?gaps,
+        threshold,
+        "row projection of one text block"
+    );
+    groups_at_gaps(&bands, &gaps, threshold)
+}
+
+/// The smallest row gap that counts as separating two utterances.
+fn gap_threshold(bands: &[(u32, u32)], gaps: &[u32]) -> u32 {
+    let lines = bands
+        .iter()
+        .map(|(from, to)| to - from)
+        .collect::<Vec<_>>();
+    let by_line = f64::from(median_u32(&lines)) * f64::from(UTTERANCE_GAP_LINE_RATIO);
+    let by_spacing = f64::from(median_u32(gaps)) * f64::from(UTTERANCE_GAP_SPACING_RATIO);
+    by_line
+        .max(by_spacing)
+        .max(f64::from(UTTERANCE_MIN_LINE_GAP))
+        .ceil() as u32
+}
+
+fn median_u32(values: &[u32]) -> u32 {
+    if values.is_empty() {
+        return 0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
+}
+
+/// Ink per row of an instance mask.
+fn row_ink_counts(mask: &KoharuLayoutMask) -> Vec<u32> {
+    let width = mask.width as usize;
+    mask.pixels
+        .chunks(width)
+        .map(|row| {
+            row.iter()
+                .filter(|pixel| **pixel != 0)
+                .count() as u32
+        })
+        .collect()
+}
+
+/// Contiguous rows carrying ink, as `[start, end)` pairs. The empty rows between
+/// them are the only places an utterance can end.
+fn ink_bands(ink: &[u32]) -> Vec<(u32, u32)> {
+    let mut bands: Vec<(u32, u32)> = Vec::new();
+    let mut start: Option<u32> = None;
+    for (row, count) in ink.iter().enumerate() {
+        let row = row as u32;
+        match (start, *count) {
+            (None, 0) => {}
+            (None, _) => start = Some(row),
+            (Some(begin), 0) => {
+                bands.push((begin, row));
+                start = None;
+            }
+            (Some(_), _) => {}
+        }
+    }
+    if let Some(begin) = start {
+        bands.push((begin, ink.len() as u32));
+    }
+    bands
+}
+
+fn groups_at_gaps(bands: &[(u32, u32)], gaps: &[u32], threshold: u32) -> Vec<(u32, u32)> {
+    let mut groups = Vec::new();
+    let mut start = bands[0].0;
+    let mut end = bands[0].1;
+    for (index, gap) in gaps.iter().enumerate() {
+        if *gap >= threshold {
+            groups.push((start, end));
+            start = bands[index + 1].0;
+        }
+        end = bands[index + 1].1;
+    }
+    groups.push((start, end));
+    groups
+}
+
+/// One utterance as a detection of its own: the mask cropped to its rows and to
+/// the columns those rows actually reach, so the type inference downstream
+/// measures this utterance instead of the block it was merged with.
+fn band_detection(
+    detection: &KoharuLayoutDetection,
+    (from, to): (u32, u32),
+) -> Option<KoharuLayoutDetection> {
+    let mask = &detection.mask;
+    if from >= to || to > mask.height {
+        return None;
+    }
+    let stride = mask.width as usize;
+    let mut left = stride;
+    let mut right = 0usize;
+    let mut area = 0u32;
+    for row in from..to {
+        for (column, pixel) in mask.pixels[row as usize * stride..][..stride]
+            .iter()
+            .enumerate()
+        {
+            if *pixel != 0 {
+                left = left.min(column);
+                right = right.max(column + 1);
+                area += 1;
+            }
+        }
+    }
+    if area == 0 || left >= right {
+        return None;
+    }
+
+    let width = (right - left) as u32;
+    let height = to - from;
+    let mut pixels = vec![0u8; width as usize * height as usize];
+    for row in from..to {
+        let source = &mask.pixels[row as usize * stride + left..][..width as usize];
+        let target = &mut pixels[(row - from) as usize * width as usize..][..width as usize];
+        target.copy_from_slice(source);
+    }
+    let x = mask.x + left as u32;
+    let y = mask.y + from;
+    Some(KoharuLayoutDetection {
+        label_id: detection.label_id,
+        label: detection.label.clone(),
+        score: detection.score,
+        bbox: [
+            x as f32,
+            y as f32,
+            (x + width) as f32,
+            (y + height) as f32,
+        ],
+        area,
+        mask: KoharuLayoutMask {
+            x,
+            y,
+            width,
+            height,
+            pixels,
+        },
+    })
+}
+
 fn non_maximum_suppression(detections: &mut Vec<KoharuLayoutDetection>, threshold: f32) {
     detections.sort_by(|left, right| {
         right
@@ -2038,7 +2282,8 @@ mod tests {
         ImageSize, InputFit, KoharuLayoutRFDetrSeg2XLConfig, MaskPixel, PageRegions, Processor,
         RegionOutput, StageInput, StageProcessor, closed_mask_for, color_palette, generation,
         infer_typography, layout_order, link_dialogue_regions, mask_containment, mask_for,
-        mask_geometry, non_maximum_suppression, normalize_text_color, write_region,
+        mask_geometry, non_maximum_suppression, normalize_text_color, split_joined_texts,
+        write_region,
     };
 
     #[test]
@@ -2342,6 +2587,10 @@ mod tests {
             targets[0], targets[1],
             "each utterance must claim its own balloon"
         );
+        assert_eq!(
+            targets[0], bubble,
+            "the first lobe keeps the entity that was detected"
+        );
     }
 
     /// A solid rectangle of mask ink, standing in for the strokes of one
@@ -2373,6 +2622,84 @@ mod tests {
             }
         }
         pixels
+    }
+
+    /// A text mask whose ink sits in the given `[from, to)` row bands, which is
+    /// the shape a paragraph takes when every line is separated from the next.
+    fn banded_mask(width: u32, bands: &[(u32, u32)]) -> KoharuLayoutMask {
+        let height = bands.iter().map(|(_, to)| *to).max().unwrap_or(0);
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for &(from, to) in bands {
+            for row in from..to {
+                for column in 0..width {
+                    pixels[(row * width + column) as usize] = u8::MAX;
+                }
+            }
+        }
+        KoharuLayoutMask {
+            x: 0,
+            y: 0,
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    #[test]
+    fn a_block_with_an_even_line_spacing_stays_one_utterance() {
+        // Five lines, one spacing throughout: no gap crosses a threshold built
+        // from three times that spacing, so nothing is cut.
+        let mask = banded_mask(100, &[(1, 9), (11, 19), (21, 29), (31, 39), (41, 49)]);
+        let detections = vec![detection_with_mask(
+            "text",
+            0.8,
+            [0.0, 0.0, 100.0, 49.0],
+            mask,
+        )];
+
+        let output = split_joined_texts(&detections);
+
+        assert_eq!(output.len(), 1);
+    }
+
+    #[test]
+    fn a_block_that_resumes_after_a_wide_gap_becomes_two_utterances() {
+        // Four evenly spaced lines, then a gap far wider than the spacing inside
+        // either group: the shape two overlapping balloons leave behind.
+        let mask = banded_mask(100, &[(1, 9), (11, 19), (21, 29), (31, 39), (54, 62)]);
+        let detections = vec![detection_with_mask(
+            "text",
+            0.8,
+            [0.0, 0.0, 100.0, 62.0],
+            mask,
+        )];
+
+        let output = split_joined_texts(&detections);
+
+        assert_eq!(output.len(), 2, "one detection per utterance");
+        assert_eq!(
+            output.iter().map(|part| part.area).collect::<Vec<_>>(),
+            [4 * 8 * 100, 8 * 100]
+        );
+        assert_eq!(output[0].mask.y, 1, "the first part keeps its own rows");
+        assert_eq!(output[1].mask.y, 54);
+    }
+
+    #[test]
+    fn a_vertical_block_is_never_cut_by_rows() {
+        // On vertical text the row projection runs along the strokes, so cutting
+        // by rows would break words apart rather than separate utterances.
+        let mask = banded_mask(20, &[(1, 9), (11, 19), (21, 29), (41, 49)]);
+        let detections = vec![detection_with_mask(
+            "text",
+            0.8,
+            [0.0, 0.0, 20.0, 49.0],
+            mask,
+        )];
+
+        let output = split_joined_texts(&detections);
+
+        assert_eq!(output.len(), 1);
     }
 
     fn detection(label: &str, score: f32, bbox: [f32; 4]) -> KoharuLayoutDetection {
