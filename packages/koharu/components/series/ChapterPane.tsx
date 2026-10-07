@@ -97,6 +97,15 @@ export function ChapterPane({ series }: { series: string }) {
     () => chapters.filter((chapter) => selected.includes(chapter.chapter)),
     [chapters, selected],
   )
+
+  // A named span drives the export on its own. Making the user apply it to the selection first
+  // put a second, invisible step between typing a range and exporting it — the export button
+  // simply stayed disabled, which reads as the range not working at all. The selection is still
+  // what a manual pick (or a search filter) exports.
+  const exportTargets =
+    rangeTargets.length > 0
+      ? rangeTargets
+      : chosen.map((chapter) => chapterRef(series, chapter))
   // Select-all means what it covers on screen. The filter narrows the list, so the checkbox follows it
   // rather than the other way round — otherwise a search would silently redefine what it selects.
   const pickedVisible = visible.filter((chapter) => selected.includes(chapter.chapter)).length
@@ -178,13 +187,11 @@ export function ChapterPane({ series }: { series: string }) {
             type='button'
             size='sm'
             variant='outline'
-            disabled={busy || chosen.length === 0}
+            disabled={busy || exportTargets.length === 0}
             aria-busy={exporting}
             className='h-7 gap-1.5 text-[10px]'
             onClick={() =>
-              void exportChapters({
-                chapters: chosen.map((chapter) => chapterRef(series, chapter)),
-              }).catch(() => undefined)
+              void exportChapters({ chapters: exportTargets }).catch(() => undefined)
             }
           >
             {exporting ? (
