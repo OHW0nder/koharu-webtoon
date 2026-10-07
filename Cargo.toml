@@ -204,3 +204,21 @@ opt-level = 3
 
 [profile.dev.package.libwebp-sys]
 opt-level = 3
+
+# 上面几条已经把两个 WebP 编解码器挑出来了，但 JPEG 与 PNG 的编解码器当时漏在列表外，于是
+# 导入与渲染里最贵的两段在开发期是未优化的，耗时测量整体失真。这几个补上之后，dev profile 下
+# 量到的编解码耗时就接近 release 了。
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.rgb]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3

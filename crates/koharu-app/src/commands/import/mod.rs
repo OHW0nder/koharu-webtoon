@@ -4,7 +4,7 @@ use std::{
     io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::{Context as _, Result, bail};
@@ -638,6 +638,8 @@ fn encode(image: &DynamicImage) -> Result<Arc<[u8]>> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn fixture(name: &str, image: &DynamicImage) -> PathBuf {
