@@ -55,18 +55,28 @@ const DIALOGUE_MASK_CONTAINMENT_THRESHOLD: f32 = 0.9;
 /// How much of the smaller of two instance masks the larger one has to cover
 /// before the pair is treated as the same instance twice.
 const DUPLICATE_MASK_OVERLAP_THRESHOLD: f32 = 0.8;
-/// How much taller than the median line an empty row band has to be before it
-/// separates two utterances instead of two lines of one.
+/// How much the distance from one line to the next has to exceed this block's own
+/// median line spacing before two lines belong to different utterances.
 ///
-/// XianScan reaches the same split from the other end, clustering OCR lines and
-/// cutting where the vertical gap clears `min_line_h * 1.75` with an absolute
-/// floor (`src/pipeline/region_builder/clustering.rs`). A ratio against the line
-/// height alone cannot tell a two-line balloon from a four-line one, so the
-/// spacing within this block carries equal weight: every gap inside one utterance
-/// is the same line spacing, and no gap between equal values passes a threshold
-/// built from three times that value.
-const UTTERANCE_GAP_LINE_RATIO: f32 = 1.0;
-const UTTERANCE_GAP_SPACING_RATIO: f32 = 3.0;
+/// XianScan cuts where the gap reaches `min_line_h * 1.75`
+/// (`src/pipeline/region_builder/clustering.rs`), and its absolute floor of 35
+/// pixels is sized for 20–30 pixel type. Neither half carries over: that floor is
+/// wider than a Korean webtoon balloon, and the ratio alone cannot tell a loosely
+/// set multi-line balloon from two utterances. So the reference is this block's
+/// own median spacing — free of duplicates by definition, and scaling to any
+/// resolution — with the line height as a second reference and a floor only to
+/// keep rounding from cutting type it never had.
+///
+/// Nothing here is absolute. A threshold written in page pixels is wrong on every
+/// page except the one it was measured on.
+///
+/// The spacing ratio is measured, not derived: on a real page the utterance gap
+/// came out at 3.2× the block's median pitch while a loose line inside the same
+/// balloon reached 1.8×, which puts the usable band between roughly 1.8 and 3.2.
+/// Two sits in the middle of it. The line ratio keeps XianScan's 1.75 as a second
+/// reference for pages whose type is small enough that the pitch median is noisy.
+const UTTERANCE_GAP_SPACING_RATIO: f32 = 2.0;
+const UTTERANCE_GAP_LINE_RATIO: f32 = 1.75;
 /// Keeps rounding from cutting small type on a gap it never had.
 const UTTERANCE_MIN_LINE_GAP: u32 = 8;
 /// Height over width at which a text block counts as vertical.
@@ -79,6 +89,13 @@ const HORIZONTAL_TEXT_ASPECT: f32 = 1.15;
 /// row counts as carrying ink. Low enough for an antialiased edge on a light
 /// balloon, high enough that paper texture and screentone stay below it.
 const INK_MIN_CONTRAST: u32 = 32;
+/// Environment variable that turns on the row-profile diagnostics file.
+///
+/// Off by default: detection should not produce a file on every run, and a
+/// threshold that rejects a page only needs reading when someone is asking why.
+const UTTERANCE_DIAGNOSTICS: &str = "KOHARU_UTTERANCE_DIAGNOSTICS";
+/// Where those diagnostics land, in the system temporary directory.
+const UTTERANCE_PROFILE_LOG: &str = "koharu-utterance-profile.log";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(default)]
@@ -1830,14 +1847,14 @@ fn utterance_parts(
     image: &RgbImage,
     detection: &KoharuLayoutDetection,
 ) -> Vec<KoharuLayoutDetection> {
-    let bands = utterance_bands(image, detection);
-    let expected = bands.len();
-    if expected < 2 {
+    let bands = ink_profile(image, detection);
+    let groups = utterance_bands(&bands);
+    if groups.len() < 2 {
         return vec![detection.clone()];
     }
-    let parts = bands
-        .into_iter()
-        .filter_map(|band| band_detection(detection, band))
+    let parts = groups
+        .iter()
+        .filter_map(|band| band_detection(detection, *band))
         .collect::<Vec<_>>();
 
     // Splitting may not lose ink: a band that failed to become a detection means
@@ -1845,7 +1862,7 @@ fn utterance_parts(
     // recovers the original text where a partial split would silently drop a
     // line.
     let kept = parts.iter().map(|part| part.area).sum::<u32>();
-    if parts.len() < expected || kept != detection.area {
+    if parts.len() < groups.len() || kept != detection.area {
         return vec![detection.clone()];
     }
     parts
@@ -1853,46 +1870,119 @@ fn utterance_parts(
 
 /// The page rows this block's utterances occupy, or empty when it holds one
 /// utterance or cannot be read row-wise at all.
-fn utterance_bands(
-    image: &RgbImage,
-    detection: &KoharuLayoutDetection,
-) -> Vec<(u32, u32)> {
-    if detection.label != "text"
-        || !valid_mask(&detection.mask)
-        || detection.mask.width == 0
-        || detection.mask.height == 0
-    {
-        return Vec::new();
-    }
-    let [left, top, right, bottom] = detection.bbox;
-    let (width, height) = (right - left, bottom - top);
-    if !(width.is_finite() && height.is_finite() && width > 0.0 && height >= 0.0)
-        || height >= width * HORIZONTAL_TEXT_ASPECT
-    {
-        return Vec::new();
-    }
-
-    let bands = ink_profile(image, detection);
-    if bands.len() < 2 {
-        return Vec::new();
-    }
-    let gaps = bands
-        .windows(2)
-        .map(|pair| pair[1].0 - pair[0].1)
+///
+/// Every rejection is written to the diagnostics file. The application installs no
+/// tracing layer that prints (`crates/koharu/src/main.rs` wires up Sentry, metrics
+/// and span timing only), so a threshold that quietly rejects a block would
+/// otherwise leave nothing to read and the split would have to be guessed at from
+/// the outside.
+fn utterance_bands(bands: &[InkBand]) -> Vec<(u32, u32)> {
+    let rows = bands
+        .iter()
+        .map(|band| band.rows)
         .collect::<Vec<_>>();
-    let threshold = gap_threshold(&bands, &gaps);
-    let groups = groups_at_gaps(&bands, &gaps, threshold);
-    // The thresholds are proportions of this block, so whether a real block fell
-    // between them or outside them is only visible in the measurement.
-    tracing::info!(
-        label = "text utterances",
-        lines = bands.len(),
-        gaps = ?gaps,
-        threshold,
-        parts = groups.len(),
-        "row projection of one text block"
+    let widths = band_widths(bands);
+    let pitches = line_pitches(&rows);
+    let threshold = pitch_threshold(&rows, &pitches);
+    let groups = groups_at_pitches(&rows, &pitches, threshold);
+    let split = groups;
+
+    if bands.len() < 3 {
+        // Two lines leave one pitch and nothing to compare it against, so a pair
+        // is never separated on measurement alone.
+        record_utterance_profile(&widths, &pitches, threshold, 1, "too-few-lines");
+        return Vec::new();
+    }
+    // The block's own bounding box cannot say whether this is vertical text: two
+    // stacked utterances make it tall whatever its lines look like. The bands can
+    // — a vertical line of text produces narrow bands, one glyph each.
+    if !is_horizontal(bands) {
+        record_utterance_profile(&widths, &pitches, threshold, 1, "vertical");
+        return Vec::new();
+    }
+    record_utterance_profile(&widths, &pitches, threshold, split.len(), "split");
+    if split.len() < 2 {
+        Vec::new()
+    } else {
+        split
+    }
+}
+
+/// Append one line per text block to the diagnostics file.
+///
+/// The thresholds are proportions of the block they are measured on, so whether a
+/// real page falls between them or outside them is only answerable from the
+/// measurement itself.
+fn record_utterance_profile(
+    widths: &[u32],
+    pitches: &[u32],
+    threshold: u32,
+    parts: usize,
+    outcome: &str,
+) {
+    if std::env::var_os(UTTERANCE_DIAGNOSTICS).is_none() {
+        return;
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::env::temp_dir().join(UTTERANCE_PROFILE_LOG))
+    else {
+        return;
+    };
+    use std::io::Write as _;
+    let _ = writeln!(
+        file,
+        "{outcome} lines={} widths={widths:?} pitches={pitches:?} threshold={threshold} parts={parts}",
+        widths.len()
     );
-    groups
+}
+
+/// Whether these bands read as horizontal text.
+///
+/// Compared per band rather than per block: the lines of horizontal text are as
+/// wide as the block, while each line of vertical text is one glyph wide, so the
+/// ratio separates them at any type size without an absolute threshold.
+fn is_horizontal(bands: &[InkBand]) -> bool {
+    let heights = bands
+        .iter()
+        .map(|band| band.rows.1 - band.rows.0)
+        .collect::<Vec<_>>();
+    let line = f64::from(median_u32(&heights));
+    let width = f64::from(median_u32(&band_widths(bands)));
+    width > line * f64::from(HORIZONTAL_TEXT_ASPECT)
+}
+
+fn band_widths(bands: &[InkBand]) -> Vec<u32> {
+    bands
+        .iter()
+        .map(|band| band.columns.1.saturating_sub(band.columns.0))
+        .collect()
+}
+
+/// One run of rows carrying ink, with the columns it reaches.
+///
+/// The columns are what tell a vertical line of text — narrow bands, one glyph
+/// each — from a horizontal one, and they stay meaningful when two stacked
+/// utterances have made the block's own bounding box taller than it is wide.
+struct InkBand {
+    rows: (u32, u32),
+    columns: (u32, u32),
+}
+
+/// The distance from one line's first row to the next line's first row, which
+/// carries the line's own height as well as the gap above it.
+///
+/// Measuring only the blank rows between them shrinks with the type: a 15 pixel
+/// line and a 30 pixel line with identical leading both report the same gap, and a
+/// threshold in those units silently becomes stricter as type shrinks. XianScan
+/// measures the same pitch (`clustering.rs`), where a leading of 4 against a 15
+/// pixel line is 19, not 4.
+fn line_pitches(bands: &[(u32, u32)]) -> Vec<u32> {
+    bands
+        .windows(2)
+        .map(|pair| pair[1].0.saturating_sub(pair[0].0))
+        .collect()
 }
 
 /// The page rows of this block that carry ink, as `[top, bottom)` pairs.
@@ -1904,23 +1994,91 @@ fn utterance_bands(
 /// mask is quantisation noise: the gaps between glyphs read as empty rows and a
 /// single line comes apart in the middle. XianScan reads the same profile off the
 /// grayscale page (`src/ml/ocr/slicing.rs`) for the same reason.
-fn ink_profile(image: &RgbImage, detection: &KoharuLayoutDetection) -> Vec<(u32, u32)> {
+fn ink_profile(image: &RgbImage, detection: &KoharuLayoutDetection) -> Vec<InkBand> {
     let Some([left, top, right, bottom]) = crop_bounds(image, detection.bbox) else {
         return Vec::new();
     };
-    let contrast = (top..bottom)
+    let mask = &detection.mask;
+    if !valid_mask(mask) || mask.width == 0 || mask.height == 0 {
+        return Vec::new();
+    }
+    // The columns this block's ink occupies come from the mask; whether a row
+    // carries ink comes from the page.
+    //
+    // Filtering each row by the mask does not work. The mask is produced on a
+    // 288-cell grid where one cell covers about eight page pixels, so the blank
+    // rows between two lines fall inside a cell and every row reads as inked —
+    // which is how a whole block collapses into a single band. The mask knows
+    // where the text is, not how many lines it has.
+    //
+    // Keeping its columns also keeps out what the box cannot: a block covering two
+    // overlapping balloons spans the outline between them, and measuring contrast
+    // across the whole box finds that outline on every row.
+    let columns = (mask.x..mask.x.saturating_add(mask.width))
+        .filter(|x| {
+            (0..mask.height)
+                .any(|row| mask.contains(*x, mask.y.saturating_add(row)))
+        })
+        .filter(|x| *x >= left && *x < right)
+        .collect::<Vec<_>>();
+    if columns.is_empty() {
+        return Vec::new();
+    }
+    // Per row, the first and last column carrying ink, read only where the mask says
+    // this block has ink. A row is blank when its brightest and darkest pixels
+    // barely diverge. Judging each row against itself needs no assumption about
+    // which colour is the paper, which sampling a background would: dense text can
+    // outnumber the gaps around it and invert the reading.
+    //
+    // The mask cannot resolve a line of type, but it does say which pixels belong
+    // to this text, and the box cannot: a block covering two overlapping balloons
+    // also covers the outline running between them, and measuring contrast across
+    // the whole box finds that outline on every row and reports a single band for
+    // the whole block.
+    let spans = (top..bottom)
         .map(|y| {
-            let (low, high) = (left..right).fold((u32::MAX, 0u32), |(low, high), x| {
-                let value = u32::from(color_luminance(image.get_pixel(x, y).0));
-                (low.min(value), high.max(value))
-            });
-            high - low
+            let columns = &columns;
+            let luminances = columns
+                .iter()
+                .map(|x| u32::from(color_luminance(image.get_pixel(*x, y).0)))
+                .collect::<Vec<_>>();
+            let (Some(low), Some(high)) = (luminances.iter().min(), luminances.iter().max())
+            else {
+                return None;
+            };
+            if high - low < INK_MIN_CONTRAST {
+                return None;
+            }
+            let cutoff = high - INK_MIN_CONTRAST;
+            let first = columns[luminances.iter().position(|value| *value <= cutoff)?];
+            let last = columns[luminances.iter().rposition(|value| *value <= cutoff)?];
+            Some((first, last + 1))
         })
         .collect::<Vec<_>>();
-    ink_bands(&contrast, INK_MIN_CONTRAST)
-        .into_iter()
-        .map(|(from, to)| (top + from, top + to))
-        .collect()
+
+    let mut bands: Vec<InkBand> = Vec::new();
+    let mut open: Option<InkBand> = None;
+    for (index, span) in spans.iter().enumerate() {
+        let row = top + index as u32;
+        open = match (open, *span) {
+            (None, None) => None,
+            (None, Some((first, end))) => Some(InkBand {
+                rows: (row, row + 1),
+                columns: (first, end),
+            }),
+            (Some(band), None) => {
+                bands.push(band);
+                None
+            }
+            (Some(mut band), Some((first, end))) => {
+                band.rows.1 = row + 1;
+                band.columns = (band.columns.0.min(first), band.columns.1.max(end));
+                Some(band)
+            }
+        };
+    }
+    bands.extend(open);
+    bands
 }
 
 /// The integer page window a detection's box covers, or `None` when it misses the
@@ -1939,13 +2097,13 @@ fn crop_bounds(image: &RgbImage, [left, top, right, bottom]: [f32; 4]) -> Option
 }
 
 /// The smallest row gap that counts as separating two utterances.
-fn gap_threshold(bands: &[(u32, u32)], gaps: &[u32]) -> u32 {
+fn pitch_threshold(bands: &[(u32, u32)], pitches: &[u32]) -> u32 {
     let lines = bands
         .iter()
         .map(|(from, to)| to - from)
         .collect::<Vec<_>>();
     let by_line = f64::from(median_u32(&lines)) * f64::from(UTTERANCE_GAP_LINE_RATIO);
-    let by_spacing = f64::from(median_u32(gaps)) * f64::from(UTTERANCE_GAP_SPACING_RATIO);
+    let by_spacing = f64::from(median_u32(pitches)) * f64::from(UTTERANCE_GAP_SPACING_RATIO);
     by_line
         .max(by_spacing)
         .max(f64::from(UTTERANCE_MIN_LINE_GAP))
@@ -1961,41 +2119,16 @@ fn median_u32(values: &[u32]) -> u32 {
     sorted[sorted.len() / 2]
 }
 
-/// Contiguous rows at or above `threshold`, as `[start, end)` pairs. The rows
-/// between them are the only places an utterance can end.
-///
-/// A row is judged against itself rather than against a sampled paper colour.
-/// The most common colour in a block is not reliably its background — dense text
-/// can outnumber the gaps around it, which inverts the reading and turns the
-/// margins into the ink. Comparing the brightest and darkest pixel of a row needs
-/// no such assumption and works on tinted or shaded balloons too.
-fn ink_bands(rows: &[u32], threshold: u32) -> Vec<(u32, u32)> {
-    let mut bands: Vec<(u32, u32)> = Vec::new();
-    let mut start: Option<u32> = None;
-    for (row, count) in rows.iter().enumerate() {
-        let row = row as u32;
-        match (start, *count >= threshold) {
-            (None, false) => {}
-            (None, true) => start = Some(row),
-            (Some(begin), false) => {
-                bands.push((begin, row));
-                start = None;
-            }
-            (Some(_), true) => {}
-        }
-    }
-    if let Some(begin) = start {
-        bands.push((begin, rows.len() as u32));
-    }
-    bands
-}
-
-fn groups_at_gaps(bands: &[(u32, u32)], gaps: &[u32], threshold: u32) -> Vec<(u32, u32)> {
+fn groups_at_pitches(
+    bands: &[(u32, u32)],
+    pitches: &[u32],
+    threshold: u32,
+) -> Vec<(u32, u32)> {
     let mut groups = Vec::new();
     let mut start = bands[0].0;
     let mut end = bands[0].1;
-    for (index, gap) in gaps.iter().enumerate() {
-        if *gap >= threshold {
+    for (index, pitch) in pitches.iter().enumerate() {
+        if *pitch >= threshold {
             groups.push((start, end));
             start = bands[index + 1].0;
         }
@@ -2698,6 +2831,27 @@ mod tests {
     }
 
     /// The mask of a `banded_page`, with ink on exactly the same rows.
+    /// A `banded_page` mask restricted to a column range, standing in for the
+    /// instance mask of text that shares its box with a balloon outline.
+    fn inset_mask(width: u32, bands: &[(u32, u32)], left: u32, right: u32) -> KoharuLayoutMask {
+        let height = bands.iter().map(|(_, to)| *to).max().unwrap_or(0);
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for &(from, to) in bands {
+            for row in from..to {
+                for column in left..right {
+                    pixels[(row * width + column) as usize] = u8::MAX;
+                }
+            }
+        }
+        KoharuLayoutMask {
+            x: 0,
+            y: 0,
+            width,
+            height,
+            pixels,
+        }
+    }
+
     fn banded_mask(width: u32, bands: &[(u32, u32)]) -> KoharuLayoutMask {
         let height = bands.iter().map(|(_, to)| *to).max().unwrap_or(0);
         let mut pixels = vec![0u8; (width * height) as usize];
@@ -2715,6 +2869,28 @@ mod tests {
             height,
             pixels,
         }
+    }
+
+    #[test]
+    fn an_outline_inside_the_block_is_not_mistaken_for_text() {
+        // Two overlapping balloons: their outlines cross this text's box but are
+        // not part of it. Measured across the whole box, every row touches an
+        // outline, so the block collapses into one band and never gets split.
+        let bands = [(5, 13), (17, 25), (47, 55), (59, 67)];
+        let mut image = banded_page(100, &bands);
+        for y in 0..67 {
+            image.put_pixel(80, y, Rgb([0, 0, 0]));
+        }
+        let detections = vec![detection_with_mask(
+            "text",
+            0.8,
+            [0.0, 0.0, 100.0, 67.0],
+            inset_mask(100, &bands, 10, 70),
+        )];
+
+        let output = split_joined_texts(&image, &detections);
+
+        assert_eq!(output.len(), 2, "the outline must not hide the split");
     }
 
     #[test]
@@ -2766,18 +2942,18 @@ mod tests {
         // rows break up wherever a glyph happens not to cover a cell. Reading the
         // profile off the page instead of the mask is what keeps the word `YOU`
         // attached to the line it belongs to.
-        let bands = [(4, 18), (22, 36)];
+        let bands = [(4, 18), (22, 36), (40, 54)];
         let image = banded_page(120, &bands);
         let detections = vec![detection_with_mask(
             "text",
             0.8,
-            [0.0, 0.0, 120.0, 36.0],
+            [0.0, 0.0, 120.0, 54.0],
             dashed_mask(120, &bands, 7),
         )];
 
         let output = split_joined_texts(&image, &detections);
 
-        assert_eq!(output.len(), 1, "the gap between the two lines is ordinary");
+        assert_eq!(output.len(), 1, "ordinary leading is not a split point");
     }
 
     #[test]
@@ -2785,7 +2961,7 @@ mod tests {
         // On vertical text the row projection runs along the strokes, so cutting
         // by rows would break words apart rather than separate utterances.
         let bands = [(1, 9), (11, 19), (21, 29), (41, 49)];
-        let image = banded_page(20, &bands);
+        let image = vertical_page(49, &bands);
         let detections = vec![detection_with_mask(
             "text",
             0.8,
@@ -2796,6 +2972,20 @@ mod tests {
         let output = split_joined_texts(&image, &detections);
 
         assert_eq!(output.len(), 1);
+    }
+
+    /// A page whose rows carry a single narrow glyph, which is the shape a
+    /// vertical line of text makes.
+    fn vertical_page(height: u32, bands: &[(u32, u32)]) -> RgbImage {
+        let mut image = RgbImage::from_pixel(20, height, Rgb([255, 255, 255]));
+        for &(from, to) in bands {
+            for y in from..to {
+                for x in 6..12 {
+                    image.put_pixel(x, y, Rgb([0, 0, 0]));
+                }
+            }
+        }
+        image
     }
 
     /// A mask whose ink stops every `period` columns, standing in for a mask
