@@ -600,23 +600,14 @@ fn strip_stem(name: &str) -> &str {
 
 /// 切片编码前的 RGB 视图：带透明度的源图合成到白纸上，其余只降位深。
 ///
-/// JPEG 没有 alpha 通道，而丢掉它会让透明区域变成文件里存的那几个 RGB 值——通常是黑的，于是
-/// 白纸变黑纸。已经是 RGB 的源图不复制。
+/// 已经是 RGB 的源图不复制。合成规则与 CBZ 导出共用 `flatten_onto_white`，
+/// 所以导入和导出不会对同一块透明区域给出两种底色。
 fn opaque_rgb(image: &DynamicImage) -> Cow<'_, ImageBuffer<Rgb<u8>, Vec<u8>>> {
     if let Some(rgb) = image.as_rgb8() {
         return Cow::Borrowed(rgb);
     }
-    let mut rgba = image.to_rgba8();
-    for pixel in rgba.pixels_mut() {
-        let alpha = f32::from(pixel.0[3]) / 255.0;
-        if alpha < 1.0 {
-            for channel in &mut pixel.0[..3] {
-                *channel = (f32::from(*channel) * alpha + 255.0 * (1.0 - alpha)).round() as u8;
-            }
-        }
-    }
     // alpha 已经全部是 255，所以这一次降位深只是丢通道，不再有透明要处理。
-    Cow::Owned(DynamicImage::ImageRgba8(rgba).to_rgb8())
+    Cow::Owned(super::flatten_onto_white(&image.to_rgba8()))
 }
 
 /// 切片的重编码器。

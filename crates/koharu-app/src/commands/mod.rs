@@ -40,6 +40,26 @@ impl Serialize for Error {
 
 use processing::Processing;
 
+/// 把带 alpha 的页合成到白纸上，得到 JPEG 能吃的 RGB。
+///
+/// JPEG 没有 alpha 通道，而丢掉它会让透明区域变成像素里存的那几个 RGB 值——通常是黑的，
+/// 于是白纸变黑纸。切片编码与 CBZ 导出共用这一份，所以两条出 JPEG 的路对透明的处理不会分叉。
+pub(crate) fn flatten_onto_white(rgba: &image::RgbaImage) -> image::RgbImage {
+    let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
+    for (target, source) in rgb.pixels_mut().zip(rgba.pixels()) {
+        let alpha = f32::from(source.0[3]) / 255.0;
+        if alpha < 1.0 {
+            for channel in 0..3 {
+                target.0[channel] =
+                    (f32::from(source.0[channel]) * alpha + 255.0 * (1.0 - alpha)).round() as u8;
+            }
+        } else {
+            target.0.copy_from_slice(&source.0[..3]);
+        }
+    }
+    rgb
+}
+
 pub(crate) trait ChannelExt<T> {
     fn publish(&self, value: T);
 }

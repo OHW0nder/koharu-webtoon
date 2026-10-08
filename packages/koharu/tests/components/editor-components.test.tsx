@@ -300,7 +300,7 @@ describe('greenfield editor', () => {
     )
   })
 
-  it.each(['png', 'psd', 'cbz'] as const)(
+  it.each(['png', 'psd', 'cbz', 'zip'] as const)(
     'shows %s export activity and prevents duplicate exports',
     async (format) => {
       const user = userEvent.setup()

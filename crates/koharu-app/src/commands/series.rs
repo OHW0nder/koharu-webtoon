@@ -1530,7 +1530,7 @@ pub(crate) async fn export_series_chapters(
         let pages = output::render_pages(snapshot, ExportFormat::Cbz, &desktop).await?;
         let folder = entry_name(&chapter.title);
         for (name, bytes) in pages {
-            // PNG data is already compressed.
+            // 页已经是 JPEG，再 deflate 一遍买不到字节，只会让 CPU 白转。
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored);
             archive.start_file(format!("{folder}/{name}"), options)?;

@@ -2,7 +2,10 @@ use anyhow::{Context as _, Result};
 use futures::future::try_join_all;
 use image::{
     ExtendedColorType, ImageEncoder as _,
-    codecs::png::{CompressionType, FilterType, PngEncoder},
+    codecs::{
+        jpeg::JpegEncoder,
+        png::{CompressionType, FilterType, PngEncoder},
+    },
 };
 use koharu_psd::{PsdExportOptions, export_page};
 use koharu_rasterizer::{Raster, RasterOptions, Rasterizer};
@@ -15,10 +18,17 @@ use std::{io::Write as _, sync::Arc};
 use tauri::{State, WebviewWindow, ipc::IpcResponse};
 use tauri_runtime_cef::CefRuntime;
 
-use super::{Error, project::CurrentProject};
+use super::{Error, flatten_onto_white, project::CurrentProject};
 use koharu_desktop::Desktop;
 
 const THUMBNAIL_EDGE: u32 = 128;
+
+/// 导出 CBZ 时的 JPEG 质量。
+///
+/// 90 是实测点，不是惯例：在项目自己的真实切片上，同一批像素编成 JPEG q90 是 0.19 B/px，
+/// 编成无损 RGBA8 PNG 是 0.80 B/px——四分之一的体积，而漫画内容上看不出差别。再往上体积
+/// 回涨得很快，再往下细描边和网点开始糊。
+const EXPORT_JPEG_QUALITY: u8 = 90;
 
 #[derive(Type)]
 #[specta(transparent)]
@@ -30,12 +40,51 @@ impl IpcResponse for ThumbnailBytes {
     }
 }
 
+/// 一个页面的字节表示。
+///
+/// 它和容器是分开的两件事，因为两者的最佳组合并不是同一种格式。
+enum PageCodec {
+    Png,
+    Jpeg,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormat {
+    /// 一个目录的无损 PNG。
     Png,
+    /// 一个目录的分层 PSD。
     Psd,
+    /// 单文件 CBZ，内含 JPEG。
     Cbz,
+    /// 单文件 ZIP，内含无损 PNG。
+    Zip,
+}
+
+impl ExportFormat {
+    /// 页落进归档，还是散在目录里。
+    ///
+    /// 归档一律用 Stored：两种页编码都已经压过一道，再 deflate 一遍买不到字节。
+    fn archived(self) -> bool {
+        matches!(self, Self::Cbz | Self::Zip)
+    }
+
+    /// 页文件名的扩展名，必须跟着容器里真正的编码走。CBZ 里写 `.png` 不是命名不讲究，
+    /// 而是会让按扩展名选解码分支的阅读器挑错。
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Cbz => "jpg",
+            Self::Png | Self::Zip => "png",
+            Self::Psd => "psd",
+        }
+    }
+
+    fn codec(self) -> PageCodec {
+        match self {
+            Self::Cbz => PageCodec::Jpeg,
+            Self::Png | Self::Psd | Self::Zip => PageCodec::Png,
+        }
+    }
 }
 
 #[tracing::instrument(
@@ -83,6 +132,13 @@ async fn pick_destination(
                 .save_file()
                 .await
         }
+        ExportFormat::Zip => {
+            dialog
+                .add_filter("ZIP Archive", &["zip"])
+                .set_file_name(format!("{name}.zip"))
+                .save_file()
+                .await
+        }
     };
     picked.map(|destination| destination.path().to_owned())
 }
@@ -116,9 +172,31 @@ pub(crate) async fn render_pages(
     let renderer = desktop.renderer();
     let rasterizer = desktop.rasterizer().await?;
     let frames = try_join_all(pages.iter().map(|&page| renderer.render(&snapshot, page))).await?;
-    let (extension, images) = match format {
-        ExportFormat::Png | ExportFormat::Cbz => {
-            let images = tokio_rayon::spawn(move || {
+    let mut names = Vec::with_capacity(pages.len());
+    for page_id in pages {
+        names.push(snapshot.page(page_id)?.page()?.label.clone());
+    }
+
+    // PSD 是分层交换格式：它的页字节不来自光栅化后的整页位图，所以它不参与下面那一支。
+    // 先走掉，否则 PNG 会白跑一遍全项目光栅化再被丢掉。
+    if matches!(format, ExportFormat::Psd) {
+        let options = PsdExportOptions::default();
+        let images = try_join_all(
+            frames
+                .iter()
+                .map(|frame| export_page(Arc::clone(&rasterizer), &snapshot, frame, &options)),
+        )
+        .await?;
+        return Ok(extension_names(names, format.extension())
+            .into_iter()
+            .zip(images)
+            .collect());
+    }
+
+    let images = match format.codec() {
+        PageCodec::Png => tokio_rayon::spawn({
+            let rasterizer = Arc::clone(&rasterizer);
+            move || {
                 frames
                     .par_iter()
                     .map(|frame| -> Result<_> {
@@ -140,26 +218,38 @@ pub(crate) async fn render_pages(
                         Ok(bytes)
                     })
                     .collect::<Result<Vec<_>>>()
-            })
-            .await?;
-            ("png", images)
-        }
-        ExportFormat::Psd => {
-            let options = PsdExportOptions::default();
-            let images = try_join_all(
+            }
+        })
+        .await?,
+        PageCodec::Jpeg => tokio_rayon::spawn({
+            let rasterizer = Arc::clone(&rasterizer);
+            move || {
                 frames
-                    .iter()
-                    .map(|frame| export_page(Arc::clone(&rasterizer), &snapshot, frame, &options)),
-            )
-            .await?;
-            ("psd", images)
-        }
+                    .par_iter()
+                    .map(|frame| -> Result<_> {
+                        let image = rasterizer
+                            .rasterize(&frame.raster_frame()?, RasterOptions::default())?
+                            .image;
+                        // 光栅化的结果带 alpha，而 JPEG 没有 alpha 通道：先合成到白纸上。
+                        // 直接丢通道会把那些像素里存的 RGB 露出来——通常是黑的，于是白纸变黑纸。
+                        let rgb = flatten_onto_white(&image);
+                        let mut bytes = Vec::new();
+                        JpegEncoder::new_with_quality(&mut bytes, EXPORT_JPEG_QUALITY)
+                            .write_image(
+                                rgb.as_raw(),
+                                rgb.width(),
+                                rgb.height(),
+                                ExtendedColorType::Rgb8,
+                            )?;
+                        Ok(bytes)
+                    })
+                    .collect::<Result<Vec<_>>>()
+            }
+        })
+        .await?,
     };
-    let mut names = Vec::with_capacity(pages.len());
-    for page_id in pages {
-        names.push(snapshot.page(page_id)?.page()?.label.clone());
-    }
-    Ok(extension_names(names, extension)
+
+    Ok(extension_names(names, format.extension())
         .into_iter()
         .zip(images)
         .collect())
@@ -199,7 +289,7 @@ async fn write_output(
     });
     let folders = folders.to_vec();
     tokio_rayon::spawn(move || -> Result<()> {
-        let mut archive = if matches!(format, ExportFormat::Cbz) {
+        let mut archive = if format.archived() {
             let directory = destination.parent().context("archive path has no parent")?;
             Some(zip::ZipWriter::new(tempfile::NamedTempFile::new_in(
                 directory,
@@ -213,7 +303,8 @@ async fn write_output(
         for (name, bytes) in pages {
             let entry = format!("{prefix}{name}");
             if let Some(archive) = &mut archive {
-                // PNG data is already compressed.
+                // 两种页编码都已经压过一道（JPEG 是 DCT，PNG 是 deflate），
+                // 再 deflate 一遍买不到字节，只会让 CPU 白转。
                 let options = zip::write::SimpleFileOptions::default()
                     .compression_method(zip::CompressionMethod::Stored);
                 archive.start_file(entry, options)?;

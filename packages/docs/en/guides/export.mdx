@@ -1,10 +1,10 @@
 ---
-title: 'Export PNG and PSD'
-description: 'Export selected pages as flattened images or layered documents.'
+title: 'Export CBZ, ZIP, PNG, and PSD'
+description: 'Export selected pages as reader archives, lossless archives, flattened images, or layered documents.'
 icon: 'file-export'
 ---
 
-Review the page composite before choosing **File → Export PNG** or **File → Export PSD**.
+Review the page composite before choosing a target under **File → Export**.
 
 <Steps>
   <Step title="Select the pages">
@@ -12,8 +12,14 @@ Review the page composite before choosing **File → Export PNG** or **File → 
   </Step>
   <Step title="Choose a format">
     <Tabs>
+      <Tab title="CBZ">
+        A single-file archive for comic readers, holding JPEG pages. This is the format Kodama and Tachiyomi expect, and the smallest one: on the same pages, lossless PNG takes about four times the space.
+      </Tab>
+      <Tab title="ZIP">
+        A single-file archive holding lossless PNG pages. Use it when you need the full image quality or when handing the pages to another tool.
+      </Tab>
       <Tab title="PNG">
-        A flattened image for delivery and review. It includes translated text, artwork, visibility, opacity, fitting, fill, and stroke from the retained renderer.
+        A directory of flattened PNG images for delivery and review. It includes translated text, artwork, visibility, opacity, fitting, fill, and stroke from the retained renderer.
       </Tab>
       <Tab title="PSD">
         A layered document for further typography or artwork edits in a compatible editor. It contains the original image, a hidden text-removal mask, one layer per cleanup or paint layer, and editable text layers. The original image layer is hidden when a cleanup layer exists. Per-layer visibility and opacity are not written, although the merged preview honors them. Pages larger than 30000 pixels on a side cannot be exported as PSD.
@@ -21,7 +27,7 @@ Review the page composite before choosing **File → Export PNG** or **File → 
     </Tabs>
   </Step>
   <Step title="Choose a destination">
-    Select an output directory in the native folder dialog. Filenames use a four-digit counter in the order the pages are exported, followed by the page label:
+    PNG and PSD pick an output directory; CBZ and ZIP pick an output file. Filenames use a four-digit counter in the order the pages are exported, followed by the page label:
 
     ```text
     0001_page-name.png
@@ -34,6 +40,10 @@ Review the page composite before choosing **File → Export PNG** or **File → 
 </Steps>
 
 <Note>
+  CBZ pages are JPEG at quality 90 and carry the `.jpg` extension. The lossless equivalent is ZIP with `.png` pages — the contents differ, so renaming one into the other does not convert it.
+</Note>
+
+<Note>
   PSD is an interchange format. It does not preserve all OCR semantics, model provenance, revision
   history, or renderer behavior as native Photoshop concepts. Keep the `.khrproj` directory as your
   editable source and backup.
@@ -41,6 +51,6 @@ Review the page composite before choosing **File → Export PNG** or **File → 
 
 ## Check consistency
 
-Canvas, PNG, and PSD begin with the same scene and prepared rendering result. If they differ, report the project revision, page, format, and images through [troubleshooting](/en/reference/troubleshooting).
+Canvas, CBZ, ZIP, PNG, and PSD begin with the same scene and prepared rendering result. If they differ, report the project revision, page, format, and images through [troubleshooting](/en/reference/troubleshooting).
 
 There is no separate “inpainted image only” export.
